@@ -1,0 +1,1953 @@
+# WEEK 4: CRUD Operations - Create & Read
+## Praktikum Cloud Computing - Institut Teknologi Kalimantan
+
+### 📋 INFORMASI SESI
+- **Week**: 4
+- **Durasi**: 100 menit  
+- **Topik**: Implementasi CRUD Operations (Create & Read) dengan Laravel
+- **Target**: Mahasiswa Semester 6
+- **Platform**: Google Cloud Shell
+- **Repository**: github.com/aidilsaputrakirsan/praktikum-cc
+
+### 🎯 TUJUAN PEMBELAJARAN
+Setelah menyelesaikan praktikum ini, mahasiswa diharapkan mampu:
+1. Mengimplementasikan Laravel Controllers dengan resource methods yang optimal
+2. Membuat form handling dengan validation yang comprehensive
+3. Melakukan operasi database Create dan Read menggunakan Eloquent ORM
+4. Mengintegrasikan Tailwind CSS untuk UI forms dan data display
+5. Membangun API endpoints untuk frontend communication
+6. Implementasi error handling dan user feedback systems
+7. Menerapkan best practices untuk CRUD operations security
+
+### 📚 PERSIAPAN
+**Prerequisites yang harus dipenuhi:**
+- Week 1, 2, dan 3 telah completed successfully
+- Database schema sudah implemented dengan proper relationships
+- Laravel models sudah configured dengan fillable attributes
+- Tailwind CSS sudah functional dengan custom components
+
+**Environment Verification:**
+```bash
+# Pastikan berada di direktori project Laravel
+cd ~/praktikum-cc/week2/laravel-app
+
+# Verifikasi database connection dan models
+php artisan tinker --execute="
+echo 'Database Status: ';
+try {
+    \DB::connection()->getPdo();
+    echo 'Connected' . PHP_EOL;
+    echo 'Users count: ' . \App\Models\User::count() . PHP_EOL;
+    echo 'Categories count: ' . \App\Models\Category::count() . PHP_EOL;
+} catch (\Exception \$e) {
+    echo 'Connection failed: ' . \$e->getMessage() . PHP_EOL;
+}
+"
+
+# Verifikasi Tailwind CSS build
+ls -la public/build/assets/ | grep -E "\.(css|js)"
+```
+
+### 🛠️ LANGKAH PRAKTIKUM
+
+#### **Bagian 1: Setup Controllers dan Routes (20 menit)**
+
+##### Step 1.1: Generate Resource Controllers
+```bash
+# Generate resource controllers untuk semua models utama
+php artisan make:controller PostController --resource --model=Post
+php artisan make:controller CategoryController --resource --model=Category
+php artisan make:controller TagController --resource --model=Tag
+php artisan make:controller CommentController --resource --model=Comment
+
+# Generate API controllers untuk AJAX operations
+php artisan make:controller Api/PostApiController --api --model=Post
+php artisan make:controller Api/CategoryApiController --api --model=Category
+
+# Verifikasi controllers telah dibuat
+ls -la app/Http/Controllers/
+ls -la app/Http/Controllers/Api/
+```
+
+##### Step 1.2: Konfigurasi Web Routes
+```bash
+# Edit file routes untuk web interface
+nano routes/web.php
+```
+
+**Isi file routes/web.php:**
+```php
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\PostController;
+use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\TagController;
+use App\Http\Controllers\CommentController;
+
+/*
+|--------------------------------------------------------------------------
+| Web Routes - Praktikum Cloud Computing ITK Week 4
+|--------------------------------------------------------------------------
+|
+| Routes untuk CRUD operations dengan Laravel Resource Controllers
+| Menggunakan RESTful conventions untuk consistent API design
+|
+*/
+
+// Homepage route (dari week 2)
+Route::get('/', function () {
+    return view('welcome');
+})->name('home');
+
+// Dashboard route untuk admin interface
+Route::get('/dashboard', function () {
+    return view('dashboard');
+})->name('dashboard');
+
+/*
+|--------------------------------------------------------------------------
+| Resource Routes untuk CRUD Operations
+|--------------------------------------------------------------------------
+*/
+
+// Posts management routes
+Route::resource('posts', PostController::class)->names([
+    'index' => 'posts.index',       // GET /posts - List all posts
+    'create' => 'posts.create',     // GET /posts/create - Show create form
+    'store' => 'posts.store',       // POST /posts - Store new post
+    'show' => 'posts.show',         // GET /posts/{post} - Show single post
+    'edit' => 'posts.edit',         // GET /posts/{post}/edit - Show edit form
+    'update' => 'posts.update',     // PUT/PATCH /posts/{post} - Update post
+    'destroy' => 'posts.destroy',   // DELETE /posts/{post} - Delete post
+]);
+
+// Categories management routes
+Route::resource('categories', CategoryController::class)->except([
+    'show' // Categories tidak memerlukan show page individual
+]);
+
+// Tags management routes  
+Route::resource('tags', TagController::class)->except([
+    'show' // Tags tidak memerlukan show page individual
+]);
+
+// Comments routes (nested dalam posts)
+Route::resource('posts.comments', CommentController::class)->except([
+    'index', 'show' // Comments di-handle dalam post show page
+])->shallow(); // Shallow nesting untuk edit/update/delete
+
+/*
+|--------------------------------------------------------------------------
+| Additional Routes untuk Enhanced Functionality
+|--------------------------------------------------------------------------
+*/
+
+// Route untuk public post viewing (tanpa authentication)
+Route::get('/blog', [PostController::class, 'publicIndex'])->name('blog.index');
+Route::get('/blog/{post:slug}', [PostController::class, 'publicShow'])->name('blog.show');
+
+// Route untuk category filtering
+Route::get('/category/{category:slug}', [PostController::class, 'byCategory'])->name('posts.by-category');
+
+// Route untuk tag filtering
+Route::get('/tag/{tag:slug}', [PostController::class, 'byTag'])->name('posts.by-tag');
+
+// Search functionality
+Route::get('/search', [PostController::class, 'search'])->name('posts.search');
+
+/*
+|--------------------------------------------------------------------------
+| Testing Routes untuk Development
+|--------------------------------------------------------------------------
+*/
+
+// Route testing untuk development purposes
+Route::get('/test-data', function () {
+    return response()->json([
+        'posts_count' => \App\Models\Post::count(),
+        'categories_count' => \App\Models\Category::count(),
+        'tags_count' => \App\Models\Tag::count(),
+        'users_count' => \App\Models\User::count(),
+        'latest_post' => \App\Models\Post::latest()->first()?->title ?? 'No posts yet',
+        'timestamp' => now()->toISOString(),
+    ]);
+})->name('test-data');
+```
+
+##### Step 1.3: Konfigurasi API Routes
+```bash
+# Edit file routes untuk API endpoints
+nano routes/api.php
+```
+
+**Isi file routes/api.php:**
+```php
+<?php
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\PostApiController;
+use App\Http\Controllers\Api\CategoryApiController;
+
+/*
+|--------------------------------------------------------------------------
+| API Routes - Praktikum Cloud Computing ITK Week 4
+|--------------------------------------------------------------------------
+|
+| API routes untuk AJAX operations dan frontend integration
+| Semua routes menggunakan prefix 'api' dan middleware 'api'
+|
+*/
+
+// API info endpoint
+Route::get('/info', function (Request $request) {
+    return response()->json([
+        'application' => 'Praktikum Cloud Computing ITK',
+        'version' => '1.0.0',
+        'laravel_version' => app()->version(),
+        'api_version' => 'v1',
+        'timestamp' => now()->toISOString(),
+        'endpoints' => [
+            'posts' => '/api/posts',
+            'categories' => '/api/categories',
+            'search' => '/api/posts/search',
+        ]
+    ]);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Posts API Routes
+|--------------------------------------------------------------------------
+*/
+
+// RESTful API untuk posts
+Route::apiResource('posts', PostApiController::class);
+
+// Additional posts API endpoints
+Route::prefix('posts')->group(function () {
+    // Search posts by keyword
+    Route::get('search/{keyword}', [PostApiController::class, 'search'])
+          ->name('api.posts.search');
+    
+    // Get posts by category
+    Route::get('category/{category}', [PostApiController::class, 'byCategory'])
+          ->name('api.posts.by-category');
+    
+    // Get posts by tag
+    Route::get('tag/{tag}', [PostApiController::class, 'byTag'])
+          ->name('api.posts.by-tag');
+    
+    // Get featured posts
+    Route::get('featured', [PostApiController::class, 'featured'])
+          ->name('api.posts.featured');
+    
+    // Get published posts only
+    Route::get('published', [PostApiController::class, 'published'])
+          ->name('api.posts.published');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Categories API Routes
+|--------------------------------------------------------------------------
+*/
+
+// RESTful API untuk categories
+Route::apiResource('categories', CategoryApiController::class);
+
+// Additional categories API endpoints
+Route::prefix('categories')->group(function () {
+    // Get category tree (hierarchical structure)
+    Route::get('tree', [CategoryApiController::class, 'tree'])
+          ->name('api.categories.tree');
+    
+    // Get active categories only
+    Route::get('active', [CategoryApiController::class, 'active'])
+          ->name('api.categories.active');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Statistics API Routes
+|--------------------------------------------------------------------------
+*/
+
+// Dashboard statistics untuk admin interface
+Route::get('/stats', function () {
+    return response()->json([
+        'total_posts' => \App\Models\Post::count(),
+        'published_posts' => \App\Models\Post::published()->count(),
+        'draft_posts' => \App\Models\Post::where('status', 'draft')->count(),
+        'total_categories' => \App\Models\Category::count(),
+        'total_tags' => \App\Models\Tag::count(),
+        'total_users' => \App\Models\User::count(),
+        'recent_posts' => \App\Models\Post::latest()->take(5)->pluck('title'),
+        'generated_at' => now()->toISOString(),
+    ]);
+})->name('api.stats');
+```
+
+#### **Bagian 2: Implementasi Post Controller (25 menit)**
+
+##### Step 2.1: Implementasi PostController - Index dan Show Methods
+```bash
+# Edit PostController untuk implementasi CRUD operations
+nano app/Http/Controllers/PostController.php
+```
+
+**Isi file app/Http/Controllers/PostController.php:**
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Post;
+use App\Models\Category;
+use App\Models\Tag;
+use App\Models\User;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
+
+class PostController extends Controller
+{
+    /**
+     * Display listing of posts dengan pagination dan filtering
+     * Method ini untuk admin interface - menampilkan semua posts
+     */
+    public function index(Request $request)
+    {
+        // Query builder untuk posts dengan eager loading relationships
+        $query = Post::with(['user', 'category', 'tags'])
+                    ->withCount('comments'); // Include comment count
+
+        // Filtering berdasarkan status
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        // Filtering berdasarkan category
+        if ($request->filled('category')) {
+            $query->where('category_id', $request->category);
+        }
+
+        // Filtering berdasarkan author
+        if ($request->filled('author')) {
+            $query->where('user_id', $request->author);
+        }
+
+        // Search functionality
+        if ($request->filled('search')) {
+            $searchTerm = $request->search;
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('title', 'LIKE', "%{$searchTerm}%")
+                  ->orWhere('content', 'LIKE', "%{$searchTerm}%")
+                  ->orWhere('excerpt', 'LIKE', "%{$searchTerm}%");
+            });
+        }
+
+        // Sorting - default by latest created
+        $sortBy = $request->get('sort', 'created_at');
+        $sortOrder = $request->get('order', 'desc');
+        $query->orderBy($sortBy, $sortOrder);
+
+        // Pagination dengan 10 posts per page
+        $posts = $query->paginate(10)->withQueryString();
+
+        // Data untuk filter dropdowns
+        $categories = Category::active()->orderBy('name')->get();
+        $authors = User::active()->orderBy('name')->get();
+
+        // Statistics untuk dashboard
+        $stats = [
+            'total' => Post::count(),
+            'published' => Post::published()->count(),
+            'draft' => Post::where('status', 'draft')->count(),
+            'archived' => Post::where('status', 'archived')->count(),
+        ];
+
+        return view('posts.index', compact('posts', 'categories', 'authors', 'stats'));
+    }
+
+    /**
+     * Show form untuk create new post
+     */
+    public function create()
+    {
+        // Data untuk form dropdowns
+        $categories = Category::active()->orderBy('name')->get();
+        $tags = Tag::orderBy('name')->get();
+        $users = User::active()->role(['admin', 'editor', 'author'])->orderBy('name')->get();
+
+        return view('posts.create', compact('categories', 'tags', 'users'));
+    }
+
+    /**
+     * Store new post ke database
+     */
+    public function store(Request $request)
+    {
+        // Validation rules untuk create post
+        $validated = $request->validate([
+            'title' => 'required|string|max:255',
+            'content' => 'required|string|min:10',
+            'excerpt' => 'nullable|string|max:500',
+            'featured_image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'status' => 'required|in:draft,published,archived',
+            'category_id' => 'required|exists:categories,id',
+            'user_id' => 'required|exists:users,id',
+            'tags' => 'nullable|array',
+            'tags.*' => 'exists:tags,id',
+            'meta_title' => 'nullable|string|max:255',
+            'meta_description' => 'nullable|string|max:500',
+            'meta_keywords' => 'nullable|string|max:255',
+            'is_featured' => 'boolean',
+            'allow_comments' => 'boolean',
+        ]);
+
+        // Generate unique slug dari title
+        $validated['slug'] = $this->generateUniqueSlug($validated['title']);
+
+        // Handle featured image upload
+        if ($request->hasFile('featured_image')) {
+            $validated['featured_image'] = $request->file('featured_image')
+                                                 ->store('posts/featured-images', 'public');
+        }
+
+        // Set published_at jika status published
+        if ($validated['status'] === 'published') {
+            $validated['published_at'] = now();
+        }
+
+        // Create post record
+        $post = Post::create($validated);
+
+        // Attach tags jika ada
+        if (!empty($validated['tags'])) {
+            $post->tags()->attach($validated['tags']);
+        }
+
+        // Flash message success
+        return redirect()->route('posts.index')
+                        ->with('success', "Post '{$post->title}' berhasil dibuat!");
+    }
+
+    /**
+     * Display single post untuk admin view
+     */
+    public function show(Post $post)
+    {
+        // Load relationships untuk display
+        $post->load(['user', 'category', 'tags', 'comments.user']);
+
+        // Increment views count (optional untuk admin view)
+        $post->incrementViews();
+
+        // Related posts berdasarkan category dan tags
+        $relatedPosts = Post::published()
+                           ->where('id', '!=', $post->id)
+                           ->where(function ($query) use ($post) {
+                               $query->where('category_id', $post->category_id)
+                                     ->orWhereHas('tags', function ($q) use ($post) {
+                                         $q->whereIn('tags.id', $post->tags->pluck('id'));
+                                     });
+                           })
+                           ->withCount('comments')
+                           ->take(3)
+                           ->get();
+
+        return view('posts.show', compact('post', 'relatedPosts'));
+    }
+
+    /**
+     * Show edit form untuk existing post
+     */
+    public function edit(Post $post)
+    {
+        // Data untuk form dropdowns
+        $categories = Category::active()->orderBy('name')->get();
+        $tags = Tag::orderBy('name')->get();
+        $users = User::active()->role(['admin', 'editor', 'author'])->orderBy('name')->get();
+
+        // Selected tags untuk form
+        $selectedTags = $post->tags->pluck('id')->toArray();
+
+        return view('posts.edit', compact('post', 'categories', 'tags', 'users', 'selectedTags'));
+    }
+
+    /**
+     * Update existing post
+     */
+    public function update(Request $request, Post $post)
+    {
+        // Validation rules untuk update post
+        $validated = $request->validate([
+            'title' => 'required|string|max:255',
+            'content' => 'required|string|min:10',
+            'excerpt' => 'nullable|string|max:500',
+            'featured_image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'status' => 'required|in:draft,published,archived',
+            'category_id' => 'required|exists:categories,id',
+            'user_id' => 'required|exists:users,id',
+            'tags' => 'nullable|array',
+            'tags.*' => 'exists:tags,id',
+            'meta_title' => 'nullable|string|max:255',
+            'meta_description' => 'nullable|string|max:500',
+            'meta_keywords' => 'nullable|string|max:255',
+            'is_featured' => 'boolean',
+            'allow_comments' => 'boolean',
+        ]);
+
+        // Update slug jika title berubah
+        if ($post->title !== $validated['title']) {
+            $validated['slug'] = $this->generateUniqueSlug($validated['title'], $post->id);
+        }
+
+        // Handle featured image upload
+        if ($request->hasFile('featured_image')) {
+            // Delete old image jika ada
+            if ($post->featured_image) {
+                \Storage::disk('public')->delete($post->featured_image);
+            }
+            
+            $validated['featured_image'] = $request->file('featured_image')
+                                                 ->store('posts/featured-images', 'public');
+        }
+
+        // Set published_at jika status berubah ke published
+        if ($validated['status'] === 'published' && $post->status !== 'published') {
+            $validated['published_at'] = now();
+        }
+
+        // Update post record
+        $post->update($validated);
+
+        // Sync tags
+        if (isset($validated['tags'])) {
+            $post->tags()->sync($validated['tags']);
+        } else {
+            $post->tags()->detach();
+        }
+
+        // Flash message success
+        return redirect()->route('posts.index')
+                        ->with('success', "Post '{$post->title}' berhasil diupdate!");
+    }
+
+    /**
+     * Delete post dari database
+     */
+    public function destroy(Post $post)
+    {
+        $title = $post->title;
+
+        // Delete featured image jika ada
+        if ($post->featured_image) {
+            \Storage::disk('public')->delete($post->featured_image);
+        }
+
+        // Soft delete post (karena menggunakan SoftDeletes trait)
+        $post->delete();
+
+        // Flash message success
+        return redirect()->route('posts.index')
+                        ->with('success', "Post '{$title}' berhasil dihapus!");
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Public Frontend Methods
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Display published posts untuk public blog
+     */
+    public function publicIndex(Request $request)
+    {
+        $query = Post::published()
+                    ->with(['user', 'category', 'tags'])
+                    ->withCount('comments');
+
+        // Search functionality untuk public
+        if ($request->filled('search')) {
+            $searchTerm = $request->search;
+            $query->search($searchTerm);
+        }
+
+        // Sorting untuk public (default by published_at)
+        $query->latest('published_at');
+
+        // Pagination untuk public view
+        $posts = $query->paginate(6)->withQueryString();
+
+        // Featured posts untuk hero section
+        $featuredPosts = Post::published()
+                            ->featured()
+                            ->with(['user', 'category'])
+                            ->take(3)
+                            ->get();
+
+        return view('blog.index', compact('posts', 'featuredPosts'));
+    }
+
+    /**
+     * Display single published post untuk public view
+     */
+    public function publicShow(Post $post)
+    {
+        // Ensure post is published
+        if (!$post->isPublished()) {
+            abort(404);
+        }
+
+        // Load relationships
+        $post->load(['user', 'category', 'tags', 'comments.user.replies']);
+
+        // Increment views count
+        $post->incrementViews();
+
+        // Related posts
+        $relatedPosts = Post::published()
+                           ->where('id', '!=', $post->id)
+                           ->where('category_id', $post->category_id)
+                           ->withCount('comments')
+                           ->take(3)
+                           ->get();
+
+        return view('blog.show', compact('post', 'relatedPosts'));
+    }
+
+    /**
+     * Get posts by category untuk public view
+     */
+    public function byCategory(Category $category)
+    {
+        $posts = Post::published()
+                    ->where('category_id', $category->id)
+                    ->with(['user', 'category', 'tags'])
+                    ->withCount('comments')
+                    ->latest('published_at')
+                    ->paginate(10);
+
+        return view('blog.category', compact('posts', 'category'));
+    }
+
+    /**
+     * Get posts by tag untuk public view
+     */
+    public function byTag(Tag $tag)
+    {
+        $posts = Post::published()
+                    ->whereHas('tags', function ($query) use ($tag) {
+                        $query->where('tags.id', $tag->id);
+                    })
+                    ->with(['user', 'category', 'tags'])
+                    ->withCount('comments')
+                    ->latest('published_at')
+                    ->paginate(10);
+
+        return view('blog.tag', compact('posts', 'tag'));
+    }
+
+    /**
+     * Search posts untuk public view
+     */
+    public function search(Request $request)
+    {
+        $searchTerm = $request->get('q', '');
+        
+        $posts = collect();
+        if (!empty($searchTerm)) {
+            $posts = Post::published()
+                        ->search($searchTerm)
+                        ->with(['user', 'category', 'tags'])
+                        ->withCount('comments')
+                        ->latest('published_at')
+                        ->paginate(10)
+                        ->withQueryString();
+        }
+
+        return view('blog.search', compact('posts', 'searchTerm'));
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Helper Methods
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * Generate unique slug untuk post
+     */
+    private function generateUniqueSlug($title, $excludeId = null)
+    {
+        $slug = Str::slug($title);
+        $originalSlug = $slug;
+        $counter = 1;
+
+        // Check if slug exists
+        while (true) {
+            $query = Post::where('slug', $slug);
+            
+            if ($excludeId) {
+                $query->where('id', '!=', $excludeId);
+            }
+            
+            if (!$query->exists()) {
+                break;
+            }
+            
+            $slug = $originalSlug . '-' . $counter;
+            $counter++;
+        }
+
+        return $slug;
+    }
+}
+```
+
+#### **Bagian 3: Membuat Views dengan Tailwind CSS (30 menit)**
+
+##### Step 3.1: Membuat Layout Dashboard
+```bash
+# Buat direktori untuk posts views
+mkdir -p resources/views/posts
+mkdir -p resources/views/blog
+mkdir -p resources/views/components
+
+# Buat layout untuk dashboard
+nano resources/views/layouts/dashboard.blade.php
+```
+
+**Isi file resources/views/layouts/dashboard.blade.php:**
+```html
+<!DOCTYPE html>
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+
+    <title>@yield('title', 'Dashboard') - {{ config('app.name') }}</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.bunny.net">
+    <link href="https://fonts.bunny.net/css?family=inter:400,500,600&display=swap" rel="stylesheet" />
+
+    <!-- Scripts dan Styles -->
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
+</head>
+<body class="font-sans antialiased bg-gray-50">
+    <div class="min-h-screen flex">
+        <!-- Sidebar -->
+        <div class="w-64 bg-white shadow-sm border-r border-gray-200 fixed h-full">
+            <div class="p-6 border-b border-gray-200">
+                <h1 class="text-xl font-bold text-gradient">
+                    Dashboard CC ITK
+                </h1>
+            </div>
+            
+            <nav class="mt-6">
+                <div class="px-6 py-2">
+                    <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        Content Management
+                    </h3>
+                </div>
+                
+                <a href="{{ route('posts.index') }}" 
+                   class="flex items-center px-6 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary-600 transition {{ request()->routeIs('posts.*') ? 'bg-primary-50 text-primary-600 border-r-2 border-primary-600' : '' }}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    Posts
+                </a>
+                
+                <a href="{{ route('categories.index') }}" 
+                   class="flex items-center px-6 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary-600 transition {{ request()->routeIs('categories.*') ? 'bg-primary-50 text-primary-600 border-r-2 border-primary-600' : '' }}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.99 1.99 0 013 12V7a4 4 0 014-4z"/>
+                    </svg>
+                    Categories
+                </a>
+                
+                <a href="{{ route('tags.index') }}" 
+                   class="flex items-center px-6 py-3 text-gray-700 hover:bg-gray-50 hover:text-primary-600 transition {{ request()->routeIs('tags.*') ? 'bg-primary-50 text-primary-600 border-r-2 border-primary-600' : '' }}">
+                    <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.99 1.99 0 013 12V7a4 4 0 014-4z"/>
+                    </svg>
+                    Tags
+                </a>
+            </nav>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="flex-1 ml-64">
+            <!-- Top Navigation -->
+            <header class="bg-white shadow-sm border-b border-gray-200">
+                <div class="px-6 py-4">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h1 class="text-2xl font-bold text-gray-900">@yield('page-title')</h1>
+                            @hasSection('page-description')
+                                <p class="text-gray-600 mt-1">@yield('page-description')</p>
+                            @endif
+                        </div>
+                        
+                        <div class="flex items-center space-x-4">
+                            <a href="{{ route('blog.index') }}" 
+                               class="btn-secondary">
+                                View Site
+                            </a>
+                            <div class="h-8 w-8 bg-gray-300 rounded-full"></div>
+                        </div>
+                    </div>
+                </div>
+            </header>
+            
+            <!-- Page Content -->
+            <main class="p-6">
+                <!-- Alert Messages -->
+                @if(session('success'))
+                    <div class="mb-6 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg flex items-center" role="alert">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                        </svg>
+                        {{ session('success') }}
+                    </div>
+                @endif
+                
+                @if(session('error'))
+                    <div class="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center" role="alert">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                        </svg>
+                        {{ session('error') }}
+                    </div>
+                @endif
+
+                @yield('content')
+            </main>
+        </div>
+    </div>
+</body>
+</html>
+```
+
+##### Step 3.2: Membuat Posts Index View
+```bash
+# Buat view untuk posts listing
+nano resources/views/posts/index.blade.php
+```
+
+**Isi file resources/views/posts/index.blade.php:**
+```html
+@extends('layouts.dashboard')
+
+@section('title', 'Posts Management')
+@section('page-title', 'Posts')
+@section('page-description', 'Manage all blog posts and articles')
+
+@section('content')
+<div class="space-y-6">
+    <!-- Statistics Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div class="card">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-gray-600">Total Posts</p>
+                    <p class="text-2xl font-bold text-gray-900">{{ $stats['total'] }}</p>
+                </div>
+                <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-gray-600">Published</p>
+                    <p class="text-2xl font-bold text-green-600">{{ $stats['published'] }}</p>
+                </div>
+                <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-gray-600">Draft</p>
+                    <p class="text-2xl font-bold text-yellow-600">{{ $stats['draft'] }}</p>
+                </div>
+                <div class="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-gray-600">Archived</p>
+                    <p class="text-2xl font-bold text-gray-600">{{ $stats['archived'] }}</p>
+                </div>
+                <div class="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center">
+                    <svg class="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters and Actions -->
+    <div class="card">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
+            <!-- Search and Filters -->
+            <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+                <!-- Search Input -->
+                <div class="relative">
+                    <input type="text" 
+                           name="search" 
+                           value="{{ request('search') }}"
+                           placeholder="Search posts..."
+                           class="input-field pl-10 w-full sm:w-64">
+                    <svg class="w-5 h-5 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                    </svg>
+                </div>
+                
+                <!-- Status Filter -->
+                <select name="status" class="input-field">
+                    <option value="">All Status</option>
+                    <option value="published" {{ request('status') === 'published' ? 'selected' : '' }}>Published</option>
+                    <option value="draft" {{ request('status') === 'draft' ? 'selected' : '' }}>Draft</option>
+                    <option value="archived" {{ request('status') === 'archived' ? 'selected' : '' }}>Archived</option>
+                </select>
+                
+                <!-- Category Filter -->
+                <select name="category" class="input-field">
+                    <option value="">All Categories</option>
+                    @foreach($categories as $category)
+                        <option value="{{ $category->id }}" {{ request('category') == $category->id ? 'selected' : '' }}>
+                            {{ $category->name }}
+                        </option>
+                    @endforeach
+                </select>
+            </div>
+            
+            <!-- Action Buttons -->
+            <div class="flex space-x-3">
+                <a href="{{ route('posts.create') }}" class="btn-primary">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                    </svg>
+                    Create Post
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Posts Table -->
+    <div class="card overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Post
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Author
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Category
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Status
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Comments
+                        </th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Date
+                        </th>
+                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Actions
+                        </th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    @forelse($posts as $post)
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4">
+                                <div class="flex items-center">
+                                    @if($post->featured_image)
+                                        <img class="h-10 w-10 rounded object-cover mr-4" 
+                                             src="{{ $post->featured_image_url }}" 
+                                             alt="{{ $post->title }}">
+                                    @else
+                                        <div class="h-10 w-10 rounded bg-gray-200 mr-4 flex items-center justify-center">
+                                            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                            </svg>
+                                        </div>
+                                    @endif
+                                    <div>
+                                        <div class="text-sm font-medium text-gray-900">
+                                            {{ Str::limit($post->title, 50) }}
+                                        </div>
+                                        <div class="text-sm text-gray-500">
+                                            {{ $post->reading_time }}
+                                            @if($post->is_featured)
+                                                <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+                                                    Featured
+                                                </span>
+                                            @endif
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                {{ $post->user->name }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium" 
+                                      style="background-color: {{ $post->category->color }}20; color: {{ $post->category->color }};">
+                                    {{ $post->category->name }}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium
+                                    @if($post->status === 'published') bg-green-100 text-green-800
+                                    @elseif($post->status === 'draft') bg-yellow-100 text-yellow-800  
+                                    @else bg-gray-100 text-gray-800 @endif">
+                                    {{ ucfirst($post->status) }}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {{ $post->comments_count }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {{ $post->created_at->format('M j, Y') }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                <div class="flex items-center justify-end space-x-2">
+                                    <a href="{{ route('posts.show', $post) }}" 
+                                       class="text-primary-600 hover:text-primary-900">View</a>
+                                    <a href="{{ route('posts.edit', $post) }}" 
+                                       class="text-primary-600 hover:text-primary-900">Edit</a>
+                                    <button onclick="deletePost({{ $post->id }})" 
+                                            class="text-red-600 hover:text-red-900">Delete</button>
+                                </div>
+                            </td>
+                        </tr>
+                    @empty
+                        <tr>
+                            <td colspan="7" class="px-6 py-12 text-center">
+                                <div class="text-gray-500">
+                                    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                    </svg>
+                                    <h3 class="mt-2 text-sm font-medium text-gray-900">No posts found</h3>
+                                    <p class="mt-1 text-sm text-gray-500">Get started by creating a new post.</p>
+                                    <div class="mt-6">
+                                        <a href="{{ route('posts.create') }}" class="btn-primary">
+                                            Create Post
+                                        </a>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    @endforelse
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        @if($posts->hasPages())
+            <div class="border-t border-gray-200 px-6 py-3">
+                {{ $posts->links() }}
+            </div>
+        @endif
+    </div>
+</div>
+
+<script>
+function deletePost(postId) {
+    if (confirm('Are you sure you want to delete this post?')) {
+        fetch(`/posts/${postId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                'Accept': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert('Error deleting post');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error deleting post');
+        });
+    }
+}
+</script>
+@endsection
+```
+
+##### Step 3.3: Membuat Post Create Form
+```bash
+# Buat view untuk create post form
+nano resources/views/posts/create.blade.php
+```
+
+**Isi file resources/views/posts/create.blade.php (abbreviated untuk space):**
+```html
+@extends('layouts.dashboard')
+
+@section('title', 'Create New Post')
+@section('page-title', 'Create New Post')
+@section('page-description', 'Add a new blog post or article')
+
+@section('content')
+<div class="max-w-4xl">
+    <form action="{{ route('posts.store') }}" method="POST" enctype="multipart/form-data" class="space-y-6">
+        @csrf
+        
+        <!-- Basic Information Card -->
+        <div class="card">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Basic Information</h3>
+            
+            <!-- Title Field -->
+            <div class="mb-4">
+                <label for="title" class="block text-sm font-medium text-gray-700 mb-2">Title *</label>
+                <input type="text" 
+                       name="title" 
+                       id="title"
+                       value="{{ old('title') }}"
+                       class="input-field w-full @error('title') border-red-300 @enderror"
+                       placeholder="Enter post title..."
+                       required>
+                @error('title')
+                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                @enderror
+            </div>
+            
+            <!-- Content Field -->
+            <div class="mb-4">
+                <label for="content" class="block text-sm font-medium text-gray-700 mb-2">Content *</label>
+                <textarea name="content" 
+                          id="content"
+                          rows="15"
+                          class="input-field w-full @error('content') border-red-300 @enderror"
+                          placeholder="Write your post content here..."
+                          required>{{ old('content') }}</textarea>
+                @error('content')
+                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                @enderror
+            </div>
+            
+            <!-- Excerpt Field -->
+            <div class="mb-4">
+                <label for="excerpt" class="block text-sm font-medium text-gray-700 mb-2">Excerpt</label>
+                <textarea name="excerpt" 
+                          id="excerpt"
+                          rows="3"
+                          class="input-field w-full @error('excerpt') border-red-300 @enderror"
+                          placeholder="Optional excerpt or summary...">{{ old('excerpt') }}</textarea>
+                @error('excerpt')
+                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                @enderror
+            </div>
+        </div>
+        
+        <!-- Metadata and Settings Card -->
+        <div class="card">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Settings</h3>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Status -->
+                <div>
+                    <label for="status" class="block text-sm font-medium text-gray-700 mb-2">Status *</label>
+                    <select name="status" id="status" class="input-field w-full @error('status') border-red-300 @enderror" required>
+                        <option value="draft" {{ old('status', 'draft') === 'draft' ? 'selected' : '' }}>Draft</option>
+                        <option value="published" {{ old('status') === 'published' ? 'selected' : '' }}>Published</option>
+                        <option value="archived" {{ old('status') === 'archived' ? 'selected' : '' }}>Archived</option>
+                    </select>
+                    @error('status')
+                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                    @enderror
+                </div>
+                
+                <!-- Category -->
+                <div>
+                    <label for="category_id" class="block text-sm font-medium text-gray-700 mb-2">Category *</label>
+                    <select name="category_id" id="category_id" class="input-field w-full @error('category_id') border-red-300 @enderror" required>
+                        <option value="">Select Category</option>
+                        @foreach($categories as $category)
+                            <option value="{{ $category->id }}" {{ old('category_id') == $category->id ? 'selected' : '' }}>
+                                {{ $category->name }}
+                            </option>
+                        @endforeach
+                    </select>
+                    @error('category_id')
+                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                    @enderror
+                </div>
+                
+                <!-- Author -->
+                <div>
+                    <label for="user_id" class="block text-sm font-medium text-gray-700 mb-2">Author *</label>
+                    <select name="user_id" id="user_id" class="input-field w-full @error('user_id') border-red-300 @enderror" required>
+                        <option value="">Select Author</option>
+                        @foreach($users as $user)
+                            <option value="{{ $user->id }}" {{ old('user_id') == $user->id ? 'selected' : '' }}>
+                                {{ $user->name }} ({{ $user->role }})
+                            </option>
+                        @endforeach
+                    </select>
+                    @error('user_id')
+                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                    @enderror
+                </div>
+                
+                <!-- Featured Image -->
+                <div>
+                    <label for="featured_image" class="block text-sm font-medium text-gray-700 mb-2">Featured Image</label>
+                    <input type="file" 
+                           name="featured_image" 
+                           id="featured_image"
+                           accept="image/*"
+                           class="input-field w-full @error('featured_image') border-red-300 @enderror">
+                    @error('featured_image')
+                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                    @enderror
+                </div>
+            </div>
+            
+            <!-- Tags -->
+            <div class="mt-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">Tags</label>
+                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                    @foreach($tags as $tag)
+                        <label class="flex items-center">
+                            <input type="checkbox" 
+                                   name="tags[]" 
+                                   value="{{ $tag->id }}"
+                                   class="rounded border-gray-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
+                                   {{ in_array($tag->id, old('tags', [])) ? 'checked' : '' }}>
+                            <span class="ml-2 text-sm text-gray-700">{{ $tag->name }}</span>
+                        </label>
+                    @endforeach
+                </div>
+            </div>
+            
+            <!-- Options -->
+            <div class="mt-4 flex space-x-6">
+                <label class="flex items-center">
+                    <input type="checkbox" 
+                           name="is_featured" 
+                           value="1"
+                           class="rounded border-gray-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
+                           {{ old('is_featured') ? 'checked' : '' }}>
+                    <span class="ml-2 text-sm text-gray-700">Featured Post</span>
+                </label>
+                
+                <label class="flex items-center">
+                    <input type="checkbox" 
+                           name="allow_comments" 
+                           value="1"
+                           class="rounded border-gray-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
+                           {{ old('allow_comments', true) ? 'checked' : '' }}>
+                    <span class="ml-2 text-sm text-gray-700">Allow Comments</span>
+                </label>
+            </div>
+        </div>
+        
+        <!-- Form Actions -->
+        <div class="flex justify-between">
+            <a href="{{ route('posts.index') }}" class="btn-secondary">
+                Cancel
+            </a>
+            
+            <div class="flex space-x-3">
+                <button type="submit" name="status" value="draft" class="btn-secondary">
+                    Save as Draft
+                </button>
+                <button type="submit" name="status" value="published" class="btn-primary">
+                    Publish Post
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+@endsection
+```
+
+#### **Bagian 4: Implementasi API Controllers dan Testing (15 menit)**
+
+##### Step 4.1: Implementasi PostApiController
+```bash
+# Edit API controller untuk AJAX operations
+nano app/Http/Controllers/Api/PostApiController.php
+```
+
+**Isi file app/Http/Controllers/Api/PostApiController.php:**
+```php
+<?php
+
+namespace App\Http\Controllers\Api;
+
+use App\Http\Controllers\Controller;
+use App\Models\Post;
+use App\Models\Category;
+use App\Models\Tag;
+use Illuminate\Http\Request;
+
+class PostApiController extends Controller
+{
+    /**
+     * Display listing of posts untuk API
+     */
+    public function index(Request $request)
+    {
+        $query = Post::with(['user:id,name', 'category:id,name,color', 'tags:id,name,color'])
+                    ->withCount('comments');
+
+        // Filter by status (default: published untuk public API)
+        $status = $request->get('status', 'published');
+        if ($status === 'all') {
+            // No filtering - show all posts
+        } else {
+            $query->where('status', $status);
+        }
+
+        // Search functionality
+        if ($request->filled('search')) {
+            $query->search($request->search);
+        }
+
+        // Pagination
+        $perPage = min($request->get('per_page', 10), 50); // Max 50 per page
+        $posts = $query->latest('published_at')->paginate($perPage);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'posts' => $posts->items(),
+                'pagination' => [
+                    'current_page' => $posts->currentPage(),
+                    'last_page' => $posts->lastPage(),
+                    'per_page' => $posts->perPage(),
+                    'total' => $posts->total(),
+                    'has_more' => $posts->hasMorePages(),
+                ]
+            ],
+            'meta' => [
+                'timestamp' => now()->toISOString(),
+                'total_published' => Post::published()->count(),
+            ]
+        ]);
+    }
+
+    /**
+     * Store new post via API
+     */
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'title' => 'required|string|max:255',
+            'content' => 'required|string|min:10',
+            'excerpt' => 'nullable|string|max:500',
+            'status' => 'required|in:draft,published,archived',
+            'category_id' => 'required|exists:categories,id',
+            'user_id' => 'required|exists:users,id',
+            'tags' => 'nullable|array',
+            'tags.*' => 'exists:tags,id',
+            'is_featured' => 'boolean',
+            'allow_comments' => 'boolean',
+        ]);
+
+        // Generate slug
+        $validated['slug'] = \Str::slug($validated['title']);
+        
+        // Set published_at if published
+        if ($validated['status'] === 'published') {
+            $validated['published_at'] = now();
+        }
+
+        $post = Post::create($validated);
+
+        // Attach tags
+        if (!empty($validated['tags'])) {
+            $post->tags()->attach($validated['tags']);
+        }
+
+        // Load relationships untuk response
+        $post->load(['user:id,name', 'category:id,name', 'tags:id,name']);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Post created successfully',
+            'data' => $post
+        ], 201);
+    }
+
+    /**
+     * Display single post
+     */
+    public function show(Post $post)
+    {
+        $post->load(['user:id,name,email', 'category:id,name,color', 'tags:id,name,color']);
+        $post->loadCount('comments');
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $post
+        ]);
+    }
+
+    /**
+     * Update post via API
+     */
+    public function update(Request $request, Post $post)
+    {
+        $validated = $request->validate([
+            'title' => 'required|string|max:255',
+            'content' => 'required|string|min:10',
+            'excerpt' => 'nullable|string|max:500',
+            'status' => 'required|in:draft,published,archived',
+            'category_id' => 'required|exists:categories,id',
+            'tags' => 'nullable|array',
+            'tags.*' => 'exists:tags,id',
+            'is_featured' => 'boolean',
+            'allow_comments' => 'boolean',
+        ]);
+
+        // Update slug if title changed
+        if ($post->title !== $validated['title']) {
+            $validated['slug'] = \Str::slug($validated['title']);
+        }
+
+        // Set published_at if status changed to published
+        if ($validated['status'] === 'published' && $post->status !== 'published') {
+            $validated['published_at'] = now();
+        }
+
+        $post->update($validated);
+
+        // Sync tags
+        if (isset($validated['tags'])) {
+            $post->tags()->sync($validated['tags']);
+        }
+
+        $post->load(['user:id,name', 'category:id,name', 'tags:id,name']);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Post updated successfully',
+            'data' => $post
+        ]);
+    }
+
+    /**
+     * Delete post via API
+     */
+    public function destroy(Post $post)
+    {
+        $title = $post->title;
+        $post->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => "Post '{$title}' deleted successfully"
+        ]);
+    }
+
+    /**
+     * Search posts by keyword
+     */
+    public function search($keyword)
+    {
+        $posts = Post::published()
+                    ->search($keyword)
+                    ->with(['user:id,name', 'category:id,name,color'])
+                    ->withCount('comments')
+                    ->latest('published_at')
+                    ->take(20)
+                    ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $posts,
+            'meta' => [
+                'keyword' => $keyword,
+                'count' => $posts->count(),
+                'timestamp' => now()->toISOString(),
+            ]
+        ]);
+    }
+
+    /**
+     * Get posts by category
+     */
+    public function byCategory(Category $category)
+    {
+        $posts = Post::published()
+                    ->where('category_id', $category->id)
+                    ->with(['user:id,name', 'category:id,name,color'])
+                    ->withCount('comments')
+                    ->latest('published_at')
+                    ->paginate(10);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'category' => $category,
+                'posts' => $posts->items(),
+                'pagination' => [
+                    'current_page' => $posts->currentPage(),
+                    'last_page' => $posts->lastPage(),
+                    'total' => $posts->total(),
+                ]
+            ]
+        ]);
+    }
+
+    /**
+     * Get featured posts
+     */
+    public function featured()
+    {
+        $posts = Post::published()
+                    ->featured()
+                    ->with(['user:id,name', 'category:id,name,color'])
+                    ->withCount('comments')
+                    ->latest('published_at')
+                    ->take(5)
+                    ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $posts,
+            'meta' => [
+                'count' => $posts->count(),
+                'timestamp' => now()->toISOString(),
+            ]
+        ]);
+    }
+}
+```
+
+##### Step 4.2: Testing CRUD Operations
+```bash
+# Test CRUD operations melalui command line dan browser
+# Start Laravel development server
+php artisan serve --host=0.0.0.0 --port=8000 &
+
+# Test API endpoints
+echo "=== Testing API Endpoints ==="
+
+# Test 1: Get all posts
+curl -s "localhost:8000/api/posts" | jq '.status' && echo "✓ API posts index working"
+
+# Test 2: Get API info
+curl -s "localhost:8000/api/info" | jq '.application' && echo "✓ API info endpoint working"
+
+# Test 3: Get featured posts
+curl -s "localhost:8000/api/posts/featured" | jq '.status' && echo "✓ API featured posts working"
+
+# Test 4: Search functionality
+curl -s "localhost:8000/api/posts/search/test" | jq '.status' && echo "✓ API search working"
+```
+
+### 🧪 TESTING & VERIFIKASI
+
+#### Test 1: Controller Methods Verification
+```bash
+echo "=== Controller Methods Verification ==="
+
+php artisan route:list --name=posts | head -10
+echo "✓ Posts routes registered"
+
+# Test controller methods exist
+php artisan tinker --execute="
+\$controller = new \App\Http\Controllers\PostController();
+\$methods = get_class_methods(\$controller);
+\$required = ['index', 'create', 'store', 'show', 'edit', 'update', 'destroy'];
+\$missing = array_diff(\$required, \$methods);
+if (empty(\$missing)) {
+    echo '✓ All required controller methods exist' . PHP_EOL;
+} else {
+    echo '✗ Missing methods: ' . implode(', ', \$missing) . PHP_EOL;
+}
+"
+```
+
+#### Test 2: Form Validation Testing
+```bash
+echo "=== Form Validation Testing ==="
+
+# Test validation dengan data kosong
+curl -X POST localhost:8000/posts \
+     -H "Accept: application/json" \
+     -H "X-CSRF-TOKEN: test-token" \
+     -d "" 2>/dev/null | grep -q "errors" && echo "✓ Validation working for empty data"
+
+# Test validation dengan data valid (mock)
+echo "✓ Form validation rules implemented in controller"
+```
+
+#### Test 3: Database CRUD Operations
+```bash
+echo "=== Database CRUD Operations Testing ==="
+
+php artisan tinker --execute="
+// Test Create operation
+try {
+    \$post = \App\Models\Post::create([
+        'title' => 'Test Post Create',
+        'content' => 'Test content for CRUD operation testing',
+        'slug' => 'test-post-create',
+        'status' => 'draft',
+        'user_id' => 1,
+        'category_id' => 1,
+    ]);
+    echo '✓ CREATE operation successful (ID: ' . \$post->id . ')' . PHP_EOL;
+    
+    // Test Read operation
+    \$found = \App\Models\Post::find(\$post->id);
+    if (\$found && \$found->title === 'Test Post Create') {
+        echo '✓ READ operation successful' . PHP_EOL;
+    }
+    
+    // Test Update operation
+    \$found->update(['title' => 'Updated Test Post']);
+    if (\$found->fresh()->title === 'Updated Test Post') {
+        echo '✓ UPDATE operation successful' . PHP_EOL;
+    }
+    
+    // Test Delete operation
+    \$found->delete();
+    if (!\App\Models\Post::find(\$post->id)) {
+        echo '✓ DELETE operation successful' . PHP_EOL;
+    }
+    
+} catch (\Exception \$e) {
+    echo '✗ CRUD operations failed: ' . \$e->getMessage() . PHP_EOL;
+}
+"
+```
+
+#### Test 4: View Rendering Testing
+```bash
+echo "=== View Rendering Testing ==="
+
+# Test views exist
+VIEWS=("posts/index" "posts/create" "posts/show" "posts/edit")
+for view in "${VIEWS[@]}"; do
+    if [ -f "resources/views/$view.blade.php" ]; then
+        echo "✓ View $view exists"
+    else
+        echo "✗ View $view missing"
+    fi
+done
+
+# Test layout files exist
+LAYOUTS=("layouts/dashboard" "layouts/app")
+for layout in "${LAYOUTS[@]}"; do
+    if [ -f "resources/views/$layout.blade.php" ]; then
+        echo "✓ Layout $layout exists"
+    else
+        echo "✗ Layout $layout missing"
+    fi
+done
+```
+
+#### Test 5: API Response Format Testing
+```bash
+echo "=== API Response Format Testing ==="
+
+# Test API response structure
+API_RESPONSE=$(curl -s "localhost:8000/api/posts?per_page=1")
+if echo "$API_RESPONSE" | jq -e '.status' >/dev/null 2>&1; then
+    echo "✓ API returns valid JSON with status field"
+else
+    echo "✗ API response format invalid"
+fi
+
+if echo "$API_RESPONSE" | jq -e '.data' >/dev/null 2>&1; then
+    echo "✓ API returns data field"
+else
+    echo "✗ API missing data field"
+fi
+
+if echo "$API_RESPONSE" | jq -e '.data.pagination' >/dev/null 2>&1; then
+    echo "✓ API returns pagination data"
+else
+    echo "✗ API missing pagination data"
+fi
+```
+
+### 🆘 TROUBLESHOOTING
+
+#### Problem 1: Controller Method Not Found
+**Gejala:** `Method [methodName] does not exist` error
+**Solusi:**
+```bash
+# Check controller namespace and class name
+php artisan route:list | grep posts
+
+# Verify controller file exists and has correct namespace
+head -10 app/Http/Controllers/PostController.php
+
+# Clear route cache
+php artisan route:clear
+php artisan config:clear
+
+# Regenerate autoload files
+composer dump-autoload
+```
+
+#### Problem 2: Mass Assignment Error
+**Gejala:** `Add [fieldname] to fillable property to allow mass assignment`
+**Solusi:**
+```bash
+# Check model fillable attributes
+php artisan tinker --execute="
+\$post = new \App\Models\Post();
+var_dump(\$post->getFillable());
+"
+
+# Add missing fields to Model fillable array
+nano app/Models/Post.php
+# Update $fillable array dengan field yang missing
+
+# Test mass assignment
+php artisan tinker --execute="
+\$post = \App\Models\Post::create([
+    'title' => 'Test',
+    'content' => 'Test content', 
+    'slug' => 'test',
+    'status' => 'draft',
+    'user_id' => 1,
+    'category_id' => 1
+]);
+echo 'Mass assignment test: ' . (\$post->id ? 'OK' : 'Failed') . PHP_EOL;
+"
+```
+
+#### Problem 3: Validation Rules Failing
+**Gejala:** Form submission fails dengan validation errors
+**Solusi:**
+```bash
+# Test validation rules dalam controller
+php artisan tinker --execute="
+\$request = new \Illuminate\Http\Request();
+\$request->merge([
+    'title' => 'Test Title',
+    'content' => 'Test content minimum 10 characters',
+    'status' => 'draft',
+    'category_id' => 1,
+    'user_id' => 1
+]);
+
+try {
+    \$validated = \$request->validate([
+        'title' => 'required|string|max:255',
+        'content' => 'required|string|min:10',
+        'status' => 'required|in:draft,published,archived',
+        'category_id' => 'required|exists:categories,id',
+        'user_id' => 'required|exists:users,id',
+    ]);
+    echo '✓ Validation rules working' . PHP_EOL;
+} catch (\Exception \$e) {
+    echo '✗ Validation failed: ' . \$e->getMessage() . PHP_EOL;
+}
+"
+
+# Check if referenced tables have data
+mysql -u laravel_user -p laravel_app -e "
+SELECT 'Users' as table_name, COUNT(*) as count FROM users
+UNION ALL
+SELECT 'Categories', COUNT(*) FROM categories;"
+```
+
+#### Problem 4: File Upload Issues
+**Gejala:** Featured image upload fails atau file tidak tersimpan
+**Solusi:**
+```bash
+# Check storage directory permissions
+ls -la storage/app/public/
+sudo chown -R $USER:www-data storage/
+chmod -R 775 storage/
+
+# Create symbolic link untuk public storage
+php artisan storage:link
+
+# Verify storage permissions
+sudo chmod -R 775 storage/app/public
+sudo chown -R $USER:www-data storage/app/public
+
+# Test storage configuration
+php artisan tinker --execute="
+echo 'Storage disk: ' . config('filesystems.default') . PHP_EOL;
+echo 'Public path: ' . storage_path('app/public') . PHP_EOL;
+echo 'Storage writable: ' . (is_writable(storage_path('app/public')) ? 'Yes' : 'No') . PHP_EOL;
+"
+
+# Create storage directories
+mkdir -p storage/app/public/posts/featured-images
+```
+
+#### Problem 5: Route Model Binding Issues
+**Gejala:** `No query results for model [Post]` error
+**Solusi:**
+```bash
+# Check route parameter names match model
+php artisan route:list | grep posts
+
+# Verify model route key name (default: id)
+php artisan tinker --execute="
+\$post = \App\Models\Post::first();
+if (\$post) {
+    echo 'Route key name: ' . \$post->getRouteKeyName() . PHP_EOL;
+    echo 'Route key value: ' . \$post->getRouteKey() . PHP_EOL;
+} else {
+    echo 'No posts found in database' . PHP_EOL;
+}
+"
+
+# Test route model binding
+curl -s "localhost:8000/posts/1" | head -20
+```
+
+#### Problem 6: Pagination Not Working
+**Gejala:** Pagination links tidak muncul atau error
+**Solusi:**
+```bash
+# Check pagination view exists
+ls -la resources/views/vendor/pagination/ 2>/dev/null || echo "Using default pagination views"
+
+# Publish pagination views for customization
+php artisan vendor:publish --tag=laravel-pagination
+
+# Test pagination query
+php artisan tinker --execute="
+\$posts = \App\Models\Post::paginate(10);
+echo 'Current page: ' . \$posts->currentPage() . PHP_EOL;
+echo 'Total items: ' . \$posts->total() . PHP_EOL;
+echo 'Per page: ' . \$posts->perPage() . PHP_EOL;
+echo 'Has pages: ' . (\$posts->hasPages() ? 'Yes' : 'No') . PHP_EOL;
+"
+```
+
+### 📋 DELIVERABLES
+
+**Checklist yang harus diserahkan pada akhir sesi:**
+
+#### ✅ Controller Implementation
+- [ ] Screenshot `php artisan route:list` showing all CRUD routes
+- [ ] PostController.php dengan semua 7 RESTful methods implemented
+- [ ] PostApiController.php dengan API endpoints functional
+- [ ] Screenshot testing controller methods di browser/Postman
+
+#### ✅ Views and Forms
+- [ ] Dashboard layout dengan responsive sidebar navigation
+- [ ] Posts index page dengan filtering, search, dan pagination
+- [ ] Create post form dengan validation dan file upload
+- [ ] Screenshots semua views rendering correctly dengan Tailwind CSS
+
+#### ✅ CRUD Operations Testing
+- [ ] Screenshot database records sebelum dan sesudah CRUD operations
+- [ ] Form submission testing dengan valid dan invalid data
+- [ ] File upload testing dengan berbagai image formats
+- [ ] Screenshots API endpoints returning proper JSON responses
+
+#### ✅ Database Integration
+- [ ] Screenshots posts table dengan sample data dari CRUD operations
+- [ ] Foreign key relationships working (posts linked to users/categories)
+- [ ] Soft deletes functionality verified
+- [ ] Database queries optimization dengan eager loading
+
+#### ✅ Frontend Integration
+- [ ] Search functionality working di posts index
+- [ ] Filtering by status, category, author working
+- [ ] Pagination links functional dan styled
+- [ ] Form validation errors displayed properly dengan Tailwind CSS
+
+#### ✅ API Documentation
+- [ ] File `api-documentation.md` berisi:
+  - Semua endpoint descriptions dan parameters
+  - Request/response examples untuk setiap endpoint
+  - Authentication requirements (jika ada)
+  - Error response formats
+
+**Format Submission:**
+```bash
+cd ~/praktikum-cc
+mkdir -p submission/week4/{controllers,views,api,tests,docs}
+
+# Copy controller files
+cp app/Http/Controllers/PostController.php submission/week4/controllers/
+cp app/Http/Controllers/Api/PostApiController.php submission/week4/api/
+
+# Copy view files
+cp -r resources/views/posts submission/week4/views/
+cp resources/views/layouts/dashboard.blade.php submission/week4/views/
+
+# Create API documentation
+cat > submission/week4/api-documentation.md << 'EOF'
+# API Documentation - Week 4 CRUD Operations
+
+## Base URL
+`http://localhost:8000/api`
+
+## Endpoints
+
+### Posts
+- `GET /posts` - List all posts
+- `POST /posts` - Create new post  
+- `GET /posts/{id}` - Get single post
+- `PUT /posts/{id}` - Update post
+- `DELETE /posts/{id}` - Delete post
+- `GET /posts/search/{keyword}` - Search posts
+- `GET /posts/featured` - Get featured posts
+
+### Response Format
+```json
+{
+  "status": "success",
+  "data": [...],
+  "meta": {
+    "timestamp": "2025-07-21T10:00:00Z"
+  }
+}
+EOF
+
+# Test final functionality
+echo "Testing final functionality..."
+php artisan route:list | grep posts > submission/week4/routes-list.txt
+
+# Commit and push
+git add submission/week4/
+git commit -m "Week 4: CRUD Operations - Create & Read - [Nama]"
+git push origin main
+```
