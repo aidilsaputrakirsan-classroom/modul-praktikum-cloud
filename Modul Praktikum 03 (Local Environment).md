@@ -1811,7 +1811,7 @@ while ($true) {
 - [ ] Database backup file setelah seeding
 
 #### ✅ Testing & Verification
-- [ ] Screenshot 5 test suite results (semua ✓ passed)
+- [ ] Screenshot 2 test suite results (semua ✓ passed)
 
 #### ✅ Documentation
 - [ ] File `week3/README.md` berisi:
