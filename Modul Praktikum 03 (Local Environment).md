@@ -1567,7 +1567,7 @@ if (class_exists('\App\Models\Category')) {
 "
 ``` -->
 
-#### Test 3: Migration Rollback and Re-run
+#### Test 2: Migration Rollback and Re-run
 ```bash
 Write-Output "=== Migration Rollback Testing ==="
 
@@ -1803,14 +1803,7 @@ while ($true) {
 ![alt text](Images/Local-Environment/3-11.png)
 - [ ] File backup migration dengan `php artisan schema:dump`
 
-#### ✅ Eloquent Models
-- [ ] 5 Model files dengan complete relationships dan methods
-- [ ] Screenshot testing model relationships di `php artisan tinker`
-- [ ] Screenshot model attributes dan fillable properties
-- [ ] Dokumentasi model methods dan scopes usage
-
 #### ✅ Database Seeding
-- [ ] 4 Seeder files dengan realistic sample data
 - [ ] Screenshot hasil `php artisan db:seed` successful execution
 ![alt text](Images/Local-Environment/3-12.png)
 - [ ] Screenshot sample data di database tables
@@ -1819,9 +1812,6 @@ while ($true) {
 
 #### ✅ Testing & Verification
 - [ ] Screenshot 5 test suite results (semua ✓ passed)
-- [ ] Screenshot database performance metrics
-- [ ] Screenshot foreign key constraint testing
-- [ ] Screenshot model relationship testing results
 
 #### ✅ Documentation
 - [ ] File `week3/README.md` berisi:
