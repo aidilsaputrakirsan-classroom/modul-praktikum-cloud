@@ -448,7 +448,7 @@ if (app()->environment(['local', 'testing'])) {
 
 ##### Step 1.3: Konfigurasi Bootstrap/app.php
 
-**Isi file config/app.php:**
+**Isi file bootstrap/app.php:**
 ```php
 <?php
 
