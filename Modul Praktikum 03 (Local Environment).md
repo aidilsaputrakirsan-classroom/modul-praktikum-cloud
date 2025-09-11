@@ -1385,7 +1385,7 @@ class Media extends Model
 ##### Step 4.1: Jalankan Migrations
 ```bash
 # Jalankan semua migrations
-php artisan migrate:fresh
+php artisan migrate:refresh
 
 # Verifikasi tables telah dibuat
 php artisan migrate:status
