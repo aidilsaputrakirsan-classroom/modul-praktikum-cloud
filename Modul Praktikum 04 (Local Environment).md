@@ -2815,8 +2815,7 @@ echo 'Has pages: ' . (\$posts->hasPages() ? 'Yes' : 'No') . PHP_EOL;
 
 - Screenshot hasil create categories (tampil di index).
 - Screenshot hasil edit categories (judul berubah).
-- Screenshot hasil delete categories (post hilang dari index).
-- Screenshot API /api/posts response JSON di Postman / REST Client.
+- Screenshot hasil delete categories (categories hilang dari index).
 
 **Format Submission:**
 1. Buat folder submission/week/
