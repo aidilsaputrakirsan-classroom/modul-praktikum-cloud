@@ -2813,10 +2813,10 @@ echo 'Has pages: ' . (\$posts->hasPages() ? 'Yes' : 'No') . PHP_EOL;
 
 #### ✅ CRUD Testing
 
-- Screenshot hasil create post (tampil di index).
-- Screenshot hasil edit post (judul berubah).
-- Screenshot hasil delete post (post hilang dari index).
-- Screenshot API /api/posts response JSON di Postman.
+- Screenshot hasil create categories (tampil di index).
+- Screenshot hasil edit categories (judul berubah).
+- Screenshot hasil delete categories (post hilang dari index).
+- Screenshot API /api/posts response JSON di Postman / REST Client.
 
 **Format Submission:**
 1. Buat folder submission/week/
