@@ -2470,6 +2470,91 @@ class PostApiController extends Controller
 }
 ```
 
+##### Step 4.1 ( 2 ): Implementasi Requests
+```bash
+php artisan make:request CategoryRequest
+
+php artisan make:request TagRequest
+```
+
+Isi file app/Http/Requests/CategoryRequest.php:
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class CategoryRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return true; // ganti sesuai policy kalau perlu
+    }
+
+    public function rules(): array
+    {
+        $id = $this->route('category')?->id;
+        return [
+            'name'        => ['required','string','max:100'],
+            'slug'        => ['nullable','string','max:120','unique:categories,slug,'.($id ?? 'NULL').',id'],
+            'parent_id'   => ['nullable','exists:categories,id'],
+            'is_active'   => ['required','boolean'],
+            'description' => ['nullable','string','max:500'],
+        ];
+    }
+
+    public function prepareForValidation(): void
+    {
+        $this->merge([
+            'is_active' => filter_var($this->is_active, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? false,
+        ]);
+    }
+}
+
+```
+
+
+Isi file app/Http/Requests/TagRequest.php:
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+
+class TagRequest extends FormRequest
+{
+    public function authorize(): bool { return true; }
+
+    protected function currentId(): ?int
+    {
+        $model = $this->route('tag'); // bisa objek Tag atau id
+        return is_object($model) ? $model->getKey() : (is_numeric($model) ? (int)$model : null);
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->merge([
+            'is_active' => $this->boolean('is_active'),
+        ]);
+    }
+
+    public function rules(): array
+    {
+        $id = $this->currentId();
+
+        return [
+            'name'      => ['required','string','max:100'],
+            'slug'      => ['nullable','string','max:120', Rule::unique('tags','slug')->ignore($id)],
+            'is_active' => ['required','boolean'],
+        ];
+    }
+}
+
+```
+
 ##### Step 4.2: Testing CRUD Operations
 ```bash
 # Pastikan sudah php artisan serve
