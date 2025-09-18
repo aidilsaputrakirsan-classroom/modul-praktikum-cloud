@@ -1477,6 +1477,7 @@ function deletePost(postId) {
 **Isi file resources/views/posts/edit.blade.php:**
 
 ```php
+
 @extends('layouts.dashboard')
 
 @section('title', 'Edit Post: ' . $post->title)
@@ -1974,93 +1975,109 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 @endsection
-Bagian 2: Advanced Delete Operations (20 menit)
-Step 2.1: Enhanced Delete Method dengan Cascade Handling
-# Update delete method dalam PostController
-nano app/Http/Controllers/PostController.php
-Update method destroy dalam PostController.php:
 
-/**
- * Delete post dengan advanced cascade handling dan cleanup
- */
-public function destroy(Post $post)
-{
-    // Authorization check (dalam praktik nyata)
-    // $this->authorize('delete', $post);
-    
-    // Start database transaction
-    \DB::beginTransaction();
-    
-    try {
-        $title = $post->title;
-        $postId = $post->id;
-        
-        // Store data untuk logging
-        $deletionData = [
-            'post_id' => $postId,
-            'title' => $title,
-            'user_id' => $post->user_id,
-            'category_id' => $post->category_id,
-            'featured_image' => $post->featured_image,
-            'tags_count' => $post->tags()->count(),
-            'comments_count' => $post->comments()->count(),
-            'deleted_by' => auth()->id() ?? 'system',
-            'deleted_at' => now()
-        ];
 
-        // Handle cascade relationships dan cleanup
-        
-        // 1. Handle Comments (soft delete to preserve data integrity)
-        if ($post->comments()->exists()) {
-            $post->comments()->delete(); // Soft delete if using SoftDeletes
-        }
-        
-        // 2. Detach Many-to-Many relationships (tags)
-        $post->tags()->detach();
-        
-        // 3. Handle Media files yang terkait dengan post
-        $post->media()->each(function ($media) {
-            // Delete physical files
-            if (\Storage::disk('public')->exists($media->path)) {
-                \Storage::disk('public')->delete($media->path);
-            }
-            // Delete media record
-            $media->delete();
-        });
-        
-        // 4. Delete featured image file
-        if ($post->featured_image) {
-            \Storage::disk('public')->delete($post->featured_image);
-        }
-        
-        // 5. Log deletion untuk audit trail sebelum delete
-        \Log::info('Post deletion initiated', $deletionData);
-        
-                // 6. Finally delete the post (soft delete)
-        $post->delete();
-        
-        // Commit transaction
-        \DB::commit();
-        
-        // Flash success message
-        return redirect()->route('posts.index')
-                        ->with('success', "Post '{$title}' and all related data successfully deleted");
+```
 
-    } catch (\Exception $e) {
-        // Rollback transaction
-        \DB::rollback();
-        
-        \Log::error('Post deletion failed', [
-            'post_id' => $post->id,
-            'error' => $e->getMessage(),
-            'stack_trace' => $e->getTraceAsString(),
-            'timestamp' => now()
-        ]);
+##### Step 3.5: Membuat Post show Form
+**Isi file resources/views/posts/show.blade.php:**
+```php
 
-        return redirect()->route('posts.index')
-                        ->with('error', 'Failed to delete post: ' . $e->getMessage());
-    }
-}
+@extends('layouts.dashboard')
+
+@section('title', 'Post Detail')
+@section('page-title', 'Post Detail')
+
+@section('content')
+@php
+  $hasExcerpt = filled($post->excerpt ?? null);
+  $excerptTrim = trim((string) $post->excerpt);
+  $contentTrim = trim((string) $post->content);
+  $isDup = $hasExcerpt && (
+      $excerptTrim === $contentTrim ||
+      str_starts_with($contentTrim, $excerptTrim)     // PHP 8
+  );
+@endphp
+
+<div class="max-w-5xl space-y-6">
+
+  <div class="flex items-center justify-between">
+    <a href="{{ route('posts.index') }}" class="btn-secondary">← Back</a>
+    <div class="space-x-2">
+      <a href="{{ route('posts.edit', $post) }}" class="btn-secondary">Edit</a>
+      <form action="{{ route('posts.destroy', $post) }}" method="POST" class="inline"
+            onsubmit="return confirm('Delete this post?');">
+        @csrf @method('DELETE')
+        <button class="btn-danger">Delete</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h2 class="text-2xl font-semibold">{{ $post->title }}</h2>
+        <div class="mt-2 flex flex-wrap items-center gap-2 text-sm text-gray-600">
+          <span class="px-2 py-0.5 rounded-full border
+            {{ $post->status === 'published' ? 'border-green-300 text-green-700 bg-green-50' : 'border-gray-300 text-gray-700 bg-gray-50' }}">
+            {{ ucfirst($post->status) }}
+          </span>
+          @if($post->category)
+            <span>• Category: <span class="font-medium">{{ $post->category->name }}</span></span>
+          @endif
+          @if($post->user)
+            <span>• Author: <span class="font-medium">{{ $post->user->name }}</span></span>
+          @endif
+          @if($post->published_at)
+            <span>• Published: {{ $post->published_at->format('Y-m-d H:i') }}</span>
+          @endif
+        </div>
+      </div>
+    </div>
+
+    @if($post->featured_image)
+      <img src="{{ Storage::url($post->featured_image) }}"
+           alt="" class="rounded-lg mt-4 max-h-80 w-full object-cover">
+    @endif
+
+    {{-- Excerpt (tampilkan hanya jika tidak duplikat) --}}
+    @if($hasExcerpt && !$isDup)
+      <div class="mt-4 p-4 rounded-lg bg-gray-50 border border-gray-200">
+        <div class="text-sm uppercase tracking-wide text-gray-500 mb-1">Excerpt</div>
+        <p class="text-gray-800">{{ $post->excerpt }}</p>
+      </div>
+    @endif
+
+    {{-- Content --}}
+    <div class="prose max-w-none mt-4">
+      {!! nl2br(e($post->content)) !!}
+    </div>
+
+    {{-- Tags --}}
+    @if($post->tags?->count())
+      <div class="mt-6 flex flex-wrap gap-2">
+        @foreach($post->tags as $tag)
+          <span class="px-2 py-1 text-xs rounded bg-blue-50 text-blue-700 border border-blue-200">#{{ $tag->name }}</span>
+        @endforeach
+      </div>
+    @endif
+  </div>
+
+  <div class="card">
+    <h3 class="text-lg font-medium mb-2">Options</h3>
+    <dl class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-y-2 text-sm">
+      <div><dt class="text-gray-500">Featured</dt><dd>{{ $post->is_featured ? 'Yes' : 'No' }}</dd></div>
+      <div><dt class="text-gray-500">Allow Comments</dt><dd>{{ $post->allow_comments ? 'Yes' : 'No' }}</dd></div>
+      <div><dt class="text-gray-500">Slug</dt><dd><code>{{ $post->slug ?? '-' }}</code></dd></div>
+      <div><dt class="text-gray-500">Created</dt><dd>{{ $post->created_at->format('Y-m-d H:i') }}</dd></div>
+      <div><dt class="text-gray-500">Updated</dt><dd>{{ $post->updated_at->format('Y-m-d H:i') }}</dd></div>
+    </dl>
+  </div>
+
+</div>
+@endsection
+
+
 ```
 
 ##### Step 3.5: Implementasi Category
