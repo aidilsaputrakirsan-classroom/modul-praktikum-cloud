@@ -1,4 +1,4 @@
-# WEEK 5: CRUD Operations - Update & Delete
+# WEEK 5: CRUD Operations - Implementasi Update, Delete, Tags, Blog, dan Bulk Operations pada Post Management
 ## Praktikum Cloud Computing - Institut Teknologi Kalimantan
 
 ### 📋 INFORMASI SESI
@@ -10,1179 +10,856 @@
 
 ### 🎯 TUJUAN PEMBELAJARAN
 Setelah menyelesaikan praktikum ini, mahasiswa diharapkan mampu:
-1. Mengimplementasikan Update operations dengan file replacement dan validation
-2. Menangani Delete operations dengan soft delete dan cascade relationships
-3. Membangun bulk operations untuk multiple record management
-4. Mengoptimalkan form handling dengan AJAX dan real-time validation
-5. Implementasi advanced relationship updates (many-to-many, nested resources)
-6. Menerapkan transaction handling untuk data integrity
-7. Membangun user interface yang responsive untuk update/delete operations
+1. Mahasiswa mampu mengimplementasikan fitur update & delete pada posts.
+2. Mahasiswa memahami konsep bulk operations.
+3. Mahasiswa mampu mengimplementasikan tags dan blog
+4. Mahasiswa dapat melakukan pengujian fitur melalui UI dashboard dan API.
 
 ### 📚 PERSIAPAN
 **Prerequisites yang harus dipenuhi:**
 - Week 1-4 telah completed dengan semua functionality working
 - CRUD Create & Read operations sudah functional
 - Database relationships sudah proper dengan foreign keys
-- Authentication system basic sudah setup (minimal user management)
 
-**Environment Verification:**
-```bash
-# Pastikan berada di direktori project Laravel
-cd laravel-app
-
-# Masuk ke tinker
-php artisan tinker
-
-# Verifikasi database connection dan existing data
-echo 'Database Connection: ' . (\DB::connection()->getPdo() ? 'OK' : 'Failed') . PHP_EOL;
-echo 'Posts count: ' . \App\Models\Post::count() . PHP_EOL;
-echo 'Categories count: ' . \App\Models\Category::count() . PHP_EOL;
-echo 'Tags count: ' . \App\Models\Tag::count() . PHP_EOL;
-echo 'Users count: ' . \App\Models\User::count() . PHP_EOL;
-
-# Verifikasi routes dan controllers dari week 4
-php artisan route:list | grep -E "(posts|categories|tags)" | head -5
-```
-
-### 🛠️ LANGKAH PRAKTIKUM
-
-#### **Bagian 1: Enhanced Update Operations (25 menit)**
-
-##### Step 1.1: Upgrade Post Update Controller Method
-
-**Update method `update` dalam PostController.php:**
+### Langkah Praktikum
+#### 1. Update app/Models/Post.php
 ```php
-/**
- * Update existing post dengan advanced file handling dan relationship updates
- */
-public function update(Request $request, Post $post)
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+class Post extends Model
 {
-    // Enhanced validation rules dengan conditional validation
-    $validated = $request->validate([
-        'title' => 'required|string|max:255',
-        'content' => 'required|string|min:10',
-        'excerpt' => 'nullable|string|max:500',
-        'featured_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
-        'remove_featured_image' => 'boolean', // Checkbox untuk remove existing image
-        'status' => 'required|in:draft,published,archived',
-        'category_id' => 'required|exists:categories,id',
-        'user_id' => 'required|exists:users,id',
-        'tags' => 'nullable|array',
-        'tags.*' => 'exists:tags,id',
-        'meta_title' => 'nullable|string|max:255',
-        'meta_description' => 'nullable|string|max:500',
-        'meta_keywords' => 'nullable|string|max:255',
-        'is_featured' => 'boolean',
-        'allow_comments' => 'boolean',
-        'published_at' => 'nullable|date',
-        'schedule_publish' => 'boolean', // Checkbox untuk scheduled publishing
-    ]);
+    use SoftDeletes;
 
-    // Start database transaction untuk data integrity
-    \DB::beginTransaction();
-    
-    try {
-        // Store original data untuk rollback jika diperlukan
-        $originalData = $post->toArray();
-        
-        // Update slug jika title berubah dan ensure uniqueness
-        if ($post->title !== $validated['title']) {
-            $validated['slug'] = $this->generateUniqueSlug($validated['title'], $post->id);
-        }
+    protected $fillable = [
+        'title','slug','excerpt','content','featured_image',
+        'status','user_id','category_id','published_at',
+        'is_featured','allow_comments',
+        'meta_title','meta_description','meta_keywords',
+    ];
 
-        // Handle featured image operations
-        if ($request->boolean('remove_featured_image')) {
-            // Remove existing featured image
-            if ($post->featured_image) {
-                \Storage::disk('public')->delete($post->featured_image);
-                $validated['featured_image'] = null;
-            }
-        } elseif ($request->hasFile('featured_image')) {
-            // Replace existing featured image dengan new upload
-            if ($post->featured_image) {
-                \Storage::disk('public')->delete($post->featured_image);
-            }
-            
-            // Store new featured image dengan organized directory structure
-            $file = $request->file('featured_image');
-            $filename = time() . '_' . \Str::slug($validated['title']) . '.' . $file->getClientOriginalExtension();
-            $validated['featured_image'] = $file->storeAs('posts/featured-images', $filename, 'public');
-        }
+    protected $casts = [
+        'published_at'  => 'datetime',
+        'is_featured'   => 'boolean',
+        'allow_comments'=> 'boolean',
+    ];
 
-        // Handle publishing logic dengan scheduled publishing
-        if ($request->boolean('schedule_publish') && $request->filled('published_at')) {
-            // Scheduled publishing - set status dan published_at
-            $validated['published_at'] = \Carbon\Carbon::parse($validated['published_at']);
-            if ($validated['published_at']->isFuture()) {
-                $validated['status'] = 'scheduled'; // Custom status untuk scheduled posts
-            }
-        } elseif ($validated['status'] === 'published' && $post->status !== 'published') {
-            // Immediate publishing
-            $validated['published_at'] = now();
-        } elseif ($validated['status'] !== 'published') {
-            // If changing from published to draft/archived, keep original published_at
-            unset($validated['published_at']);
-        }
+    /* ---------- Relationships ---------- */
+    public function user()     { return $this->belongsTo(User::class); }
+    public function category() { return $this->belongsTo(Category::class); }
+    public function tags()     { return $this->belongsToMany(Tag::class, 'post_tags'); }
+    public function comments() { return $this->hasMany(Comment::class); }
 
-        // Update post record
-        $post->update($validated);
+    /* ---------- Query Scopes ---------- */
+    public function scopePublished($q) {
+        return $q->where('status','published')
+                 ->whereNotNull('published_at')
+                 ->where('published_at','<=', now());
+    }
 
-        // Handle many-to-many relationship updates (tags)
-        if (array_key_exists('tags', $validated)) {
-            if (!empty($validated['tags'])) {
-                // Sync tags dengan timestamp tracking
-                $post->tags()->sync($validated['tags'], true);
-            } else {
-                // Remove all tags jika empty array
-                $post->tags()->detach();
-            }
-        }
+    public function scopeFeatured($q) {
+        return $q->where('is_featured', true);
+    }
 
-        // Log activity untuk audit trail
-        \Log::info('Post updated', [
-            'post_id' => $post->id,
-            'user_id' => auth()->id() ?? $validated['user_id'],
-            'changes' => $post->getChanges(),
-            'timestamp' => now()
-        ]);
+    public function scopeSearch($q, string $term = null) {
+        if (!filled($term)) return $q;
+        $s = trim($term);
+        return $q->where(function($x) use ($s) {
+            $x->where('title','like',"%{$s}%")
+              ->orWhere('excerpt','like',"%{$s}%")
+              ->orWhere('content','like',"%{$s}%");
+        });
+    }
 
-        // Commit transaction
-        \DB::commit();
+    /* ---------- Helpers ---------- */
+    public function isPublished(): bool {
+        return $this->status === 'published'
+            && $this->published_at
+            && $this->published_at->lte(now());
+    }
 
-        // Flash success message dengan detailed information
-        $message = "Post '{$post->title}' successfully updated";
-        if ($validated['status'] === 'published' && $originalData['status'] !== 'published') {
-            $message .= " and published";
-        }
-
-        return redirect()->route('posts.index')
-                        ->with('success', $message);
-
-    } catch (\Exception $e) {
-        // Rollback transaction on error
-        \DB::rollback();
-        
-        \Log::error('Post update failed', [
-            'post_id' => $post->id,
-            'error' => $e->getMessage(),
-            'timestamp' => now()
-        ]);
-
-        return redirect()->back()
-                        ->withInput()
-                        ->with('error', 'Failed to update post: ' . $e->getMessage());
+    public function incrementViews(): void {
+        // kolom views_count ada di migrasi week 3
+        $this->increment('views_count');
     }
 }
 ```
 
-##### Step 1.2: Enhanced Edit Form dengan Advanced Features
+#### 2. app/Models/Category.php
+```php
+<?php
 
-**Isi file resources/views/posts/edit.blade.php:**
-```html
-@extends('layouts.dashboard')
+namespace App\Models;
 
-@section('title', 'Edit Post: ' . $post->title)
-@section('page-title', 'Edit Post')
-@section('page-description', 'Update existing blog post or article')
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Str;
 
-@section('content')
-<div class="max-w-4xl">
-    <!-- Progress Indicator -->
-    <div class="mb-6">
-        <div class="flex items-center justify-between text-sm text-gray-500">
-            <span>Last updated: {{ $post->updated_at->diffForHumans() }}</span>
-            <span>Created: {{ $post->created_at->format('M j, Y') }}</span>
-        </div>
-    </div>
+class Category extends Model
+{
+    use HasFactory;
 
-    <form action="{{ route('posts.update', $post) }}" 
-          method="POST" 
-          enctype="multipart/form-data" 
-          class="space-y-6"
-          id="editPostForm">
-        @csrf
-        @method('PUT')
-        
-        <!-- Basic Information Card -->
-        <div class="card">
-            <div class="flex items-center justify-between mb-4">
-                <h3 class="text-lg font-medium text-gray-900">Basic Information</h3>
-                <div class="flex items-center space-x-2">
-                    <span class="text-sm text-gray-500">Auto-save:</span>
-                    <div class="w-2 h-2 bg-gray-300 rounded-full" id="autoSaveIndicator"></div>
-                </div>
-            </div>
-            
-            <!-- Title Field dengan real-time slug preview -->
-            <div class="mb-4">
-                <label for="title" class="block text-sm font-medium text-gray-700 mb-2">Title *</label>
-                <input type="text" 
-                       name="title" 
-                       id="title"
-                       value="{{ old('title', $post->title) }}"
-                       class="input-field w-full @error('title') border-red-300 @enderror"
-                       placeholder="Enter post title..."
-                       onkeyup="updateSlugPreview()"
-                       required>
-                @error('title')
-                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                @enderror
-                <!-- Slug Preview -->
-                <p class="mt-1 text-sm text-gray-500">
-                    URL: <span class="font-mono text-primary-600" id="slugPreview">{{ $post->slug }}</span>
-                </p>
-            </div>
-            
-            <!-- Content Field dengan character counter -->
-            <div class="mb-4">
-                <label for="content" class="block text-sm font-medium text-gray-700 mb-2">Content *</label>
-                <textarea name="content" 
-                          id="content"
-                          rows="15"
-                          class="input-field w-full @error('content') border-red-300 @enderror"
-                          placeholder="Write your post content here..."
-                          onkeyup="updateCharacterCount()"
-                          required>{{ old('content', $post->content) }}</textarea>
-                @error('content')
-                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                @enderror
-                <div class="mt-1 flex justify-between text-sm text-gray-500">
-                    <span>Minimum 10 characters required</span>
-                    <span id="characterCount">{{ strlen($post->content) }} characters</span>
-                </div>
-            </div>
-            
-            <!-- Excerpt Field -->
-            <div class="mb-4">
-                <label for="excerpt" class="block text-sm font-medium text-gray-700 mb-2">
-                    Excerpt 
-                    <span class="text-gray-400">(Optional - auto-generated if empty)</span>
-                </label>
-                <textarea name="excerpt" 
-                          id="excerpt"
-                          rows="3"
-                          class="input-field w-full @error('excerpt') border-red-300 @enderror"
-                          placeholder="Optional excerpt or summary..."
-                          maxlength="500">{{ old('excerpt', $post->excerpt) }}</textarea>
-                @error('excerpt')
-                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                @enderror
-            </div>
-        </div>
-        
-        <!-- Featured Image Management Card -->
-        <div class="card">
-            <h3 class="text-lg font-medium text-gray-900 mb-4">Featured Image</h3>
-            
-            <!-- Current Featured Image Display -->
-            @if($post->featured_image)
-                <div class="mb-4">
-                    <label class="block text-sm font-medium text-gray-700 mb-2">Current Image</label>
-                    <div class="relative inline-block">
-                        <img src="{{ $post->featured_image_url }}" 
-                             alt="{{ $post->title }}"
-                             class="h-32 w-48 object-cover rounded-lg border border-gray-200"
-                             id="currentFeaturedImage">
-                        <div class="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-30 transition-all duration-200 rounded-lg flex items-center justify-center">
-                            <button type="button" 
-                                    class="opacity-0 hover:opacity-100 bg-red-600 text-white px-3 py-1 rounded text-sm transition-opacity"
-                                    onclick="toggleRemoveImage()">
-                                Remove
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <!-- Remove Image Checkbox -->
-                    <div class="mt-2">
-                        <label class="flex items-center">
-                            <input type="checkbox" 
-                                   name="remove_featured_image" 
-                                   value="1"
-                                   class="rounded border-gray-300 text-red-600 shadow-sm focus:border-red-300 focus:ring focus:ring-red-200 focus:ring-opacity-50"
-                                   id="removeFeaturedImage"
-                                   onchange="toggleImageRemoval()">
-                            <span class="ml-2 text-sm text-red-600">Remove current featured image</span>
-                        </label>
-                    </div>
-                </div>
-            @endif
-            
-            <!-- Upload New Image -->
-            <div class="mb-4" id="imageUploadSection">
-                <label for="featured_image" class="block text-sm font-medium text-gray-700 mb-2">
-                    {{ $post->featured_image ? 'Replace with New Image' : 'Upload Featured Image' }}
-                </label>
-                <div class="flex items-center space-x-4">
-                    <input type="file" 
-                           name="featured_image" 
-                           id="featured_image"
-                           accept="image/*"
-                           class="input-field flex-1 @error('featured_image') border-red-300 @enderror"
-                           onchange="previewNewImage(event)">
-                    <div class="text-sm text-gray-500">
-                        Max: 2MB<br>
-                        Formats: JPEG, PNG, GIF, WebP
-                    </div>
-                </div>
-                @error('featured_image')
-                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                @enderror
-                
-                <!-- Image Preview untuk new upload -->
-                <div class="mt-3 hidden" id="imagePreviewContainer">
-                    <img id="imagePreview" class="h-32 w-48 object-cover rounded-lg border border-gray-200" alt="Preview">
-                </div>
-            </div>
-        </div>
-        
-        <!-- Metadata and Settings Card -->
-        <div class="card">
-            <h3 class="text-lg font-medium text-gray-900 mb-4">Settings & Metadata</h3>
-            
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- Status dengan conditional fields -->
-                <div>
-                    <label for="status" class="block text-sm font-medium text-gray-700 mb-2">Status *</label>
-                    <select name="status" 
-                            id="status" 
-                            class="input-field w-full @error('status') border-red-300 @enderror" 
-                            onchange="togglePublishOptions()"
-                            required>
-                        <option value="draft" {{ old('status', $post->status) === 'draft' ? 'selected' : '' }}>Draft</option>
-                        <option value="published" {{ old('status', $post->status) === 'published' ? 'selected' : '' }}>Published</option>
-                        <option value="archived" {{ old('status', $post->status) === 'archived' ? 'selected' : '' }}>Archived</option>
-                    </select>
-                    @error('status')
-                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                    @enderror
-                </div>
-                
-                <!-- Category dengan live search -->
-                <div>
-                    <label for="category_id" class="block text-sm font-medium text-gray-700 mb-2">Category *</label>
-                    <select name="category_id" 
-                            id="category_id" 
-                            class="input-field w-full @error('category_id') border-red-300 @enderror" 
-                            required>
-                        <option value="">Select Category</option>
-                        @foreach($categories as $category)
-                            <option value="{{ $category->id }}" 
-                                    {{ old('category_id', $post->category_id) == $category->id ? 'selected' : '' }}
-                                    data-color="{{ $category->color }}">
-                                {{ $category->name }}
-                            </option>
-                        @endforeach
-                    </select>
-                    @error('category_id')
-                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                    @enderror
-                </div>
-                
-                <!-- Author -->
-                <div>
-                    <label for="user_id" class="block text-sm font-medium text-gray-700 mb-2">Author *</label>
-                    <select name="user_id" 
-                            id="user_id" 
-                            class="input-field w-full @error('user_id') border-red-300 @enderror" 
-                            required>
-                        <option value="">Select Author</option>
-                        @foreach($users as $user)
-                            <option value="{{ $user->id }}" 
-                                    {{ old('user_id', $post->user_id) == $user->id ? 'selected' : '' }}>
-                                {{ $user->name }} ({{ $user->role }})
-                            </option>
-                        @endforeach
-                    </select>
-                    @error('user_id')
-                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                    @enderror
-                </div>
-                
-                <!-- Published Date dengan conditional display -->
-                <div id="publishDateSection" style="display: {{ old('status', $post->status) === 'published' ? 'block' : 'none' }}">
-                    <label for="published_at" class="block text-sm font-medium text-gray-700 mb-2">
-                        Published Date
-                    </label>
-                    <input type="datetime-local" 
-                           name="published_at" 
-                           id="published_at"
-                           value="{{ old('published_at', $post->published_at?->format('Y-m-d\TH:i')) }}"
-                           class="input-field w-full @error('published_at') border-red-300 @enderror">
-                    @error('published_at')
-                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                    @enderror
-                    
-                    <!-- Schedule Publishing Option -->
-                    <div class="mt-2">
-                        <label class="flex items-center">
-                            <input type="checkbox" 
-                                   name="schedule_publish" 
-                                   value="1"
-                                   class="rounded border-gray-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50">
-                            <span class="ml-2 text-sm text-gray-700">Schedule for future publishing</span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Tags Selection dengan improved UI -->
-            <div class="mt-6">
-                <label class="block text-sm font-medium text-gray-700 mb-3">Tags</label>
-                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-3">
-                    @foreach($tags as $tag)
-                        <label class="flex items-center hover:bg-gray-50 p-1 rounded">
-                            <input type="checkbox" 
-                                   name="tags[]" 
-                                   value="{{ $tag->id }}"
-                                   class="rounded border-gray-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-                                   {{ in_array($tag->id, old('tags', $selectedTags)) ? 'checked' : '' }}>
-                            <span class="ml-2 text-sm text-gray-700">{{ $tag->name }}</span>
-                            <span class="ml-1 w-3 h-3 rounded-full" style="background-color: {{ $tag->color }}"></span>
-                        </label>
-                    @endforeach
-                </div>
-                <p class="mt-1 text-sm text-gray-500">
-                    Selected: <span id="selectedTagsCount">{{ count($selectedTags) }}</span> tags
-                </p>
-            </div>
-            
-            <!-- Options -->
-            <div class="mt-6 flex flex-wrap gap-6">
-                <label class="flex items-center">
-                    <input type="checkbox" 
-                           name="is_featured" 
-                           value="1"
-                           class="rounded border-gray-300 text-yellow-600 shadow-sm focus:border-yellow-300 focus:ring focus:ring-yellow-200 focus:ring-opacity-50"
-                           {{ old('is_featured', $post->is_featured) ? 'checked' : '' }}>
-                    <span class="ml-2 text-sm text-gray-700">Featured Post</span>
-                </label>
-                
-                <label class="flex items-center">
-                    <input type="checkbox" 
-                           name="allow_comments" 
-                           value="1"
-                           class="rounded border-gray-300 text-green-600 shadow-sm focus:border-green-300 focus:ring focus:ring-green-200 focus:ring-opacity-50"
-                           {{ old('allow_comments', $post->allow_comments) ? 'checked' : '' }}>
-                    <span class="ml-2 text-sm text-gray-700">Allow Comments</span>
-                </label>
-            </div>
-        </div>
-        
-        <!-- SEO Metadata Card -->
-        <div class="card">
-            <h3 class="text-lg font-medium text-gray-900 mb-4">SEO Metadata</h3>
-            
-            <!-- Meta Title -->
-            <div class="mb-4">
-                <label for="meta_title" class="block text-sm font-medium text-gray-700 mb-2">
-                    Meta Title
-                    <span class="text-gray-400">(Leave empty to use post title)</span>
-                </label>
-                <input type="text" 
-                       name="meta_title" 
-                       id="meta_title"
-                       value="{{ old('meta_title', $post->meta_title) }}"
-                       class="input-field w-full @error('meta_title') border-red-300 @enderror"
-                       maxlength="255"
-                       placeholder="SEO-optimized title for search engines">
-                @error('meta_title')
-                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                @enderror
-            </div>
-            
-            <!-- Meta Description -->
-            <div class="mb-4">
-                <label for="meta_description" class="block text-sm font-medium text-gray-700 mb-2">
-                    Meta Description
-                </label>
-                <textarea name="meta_description" 
-                          id="meta_description"
-                          rows="3"
-                          class="input-field w-full @error('meta_description') border-red-300 @enderror"
-                          maxlength="500"
-                          placeholder="Brief description for search engine results">{{ old('meta_description', $post->meta_description) }}</textarea>
-                @error('meta_description')
-                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                @enderror
-            </div>
-            
-            <!-- Meta Keywords -->
-            <div class="mb-4">
-                <label for="meta_keywords" class="block text-sm font-medium text-gray-700 mb-2">
-                    Meta Keywords
-                    <span class="text-gray-400">(Comma-separated)</span>
-                </label>
-                <input type="text" 
-                       name="meta_keywords" 
-                       id="meta_keywords"
-                       value="{{ old('meta_keywords', $post->meta_keywords) }}"
-                       class="input-field w-full @error('meta_keywords') border-red-300 @enderror"
-                       placeholder="keyword1, keyword2, keyword3">
-                @error('meta_keywords')
-                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                @enderror
-            </div>
-        </div>
-        
-        <!-- Form Actions -->
-        <div class="flex justify-between">
-            <a href="{{ route('posts.index') }}" class="btn-secondary">
-                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
-                </svg>
-                Back to Posts
-            </div>
-            
-            <div class="flex space-x-3">
-                <button type="button" 
-                        class="btn-secondary" 
-                        onclick="saveDraft()">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3-3m0 0l-3 3m3-3v12"/>
-                    </svg>
-                    Save Draft
-                </button>
-                
-                <button type="submit" class="btn-primary" id="updatePostBtn">
-                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
-                    </svg>
-                    Update Post
-                </button>
-            </div>
-        </div>
-    </form>
-</div>
+    /**
+     * Atribut yang dapat diisi secara mass assignment
+     */
+    protected $fillable = [
+        'name',         // Nama kategori
+        'slug',         // URL-friendly identifier
+        'description',  // Deskripsi kategori
+        'color',        // Hex color untuk UI
+        'parent_id',    // Parent category ID untuk hierarchical structure
+        'is_active',    // Status aktif kategori
+        'sort_order',   // Urutan tampilan
+    ];
 
-<!-- JavaScript untuk enhanced functionality -->
-<script>
-// Real-time slug preview
-function updateSlugPreview() {
-    const title = document.getElementById('title').value;
-    const slug = title.toLowerCase()
-                     .replace(/[^a-z0-9]+/g, '-')
-                     .replace(/(^-|-$)/g, '');
-    document.getElementById('slugPreview').textContent = slug || 'post-slug';
-}
+    /**
+     * Casting atribut ke tipe data yang sesuai
+     */
+    protected $casts = [
+        'is_active' => 'boolean',   // Cast ke boolean
+        'sort_order' => 'integer',  // Cast ke integer
+    ];
 
-// Character counter untuk content
-function updateCharacterCount() {
-    const content = document.getElementById('content').value;
-    document.getElementById('characterCount').textContent = content.length + ' characters';
-}
+    /**
+     * Boot method untuk auto-generate slug
+     */
+    protected static function boot()
+    {
+        parent::boot();
 
-// Toggle publish date section berdasarkan status
-function togglePublishOptions() {
-    const status = document.getElementById('status').value;
-    const publishSection = document.getElementById('publishDateSection');
-    
-    if (status === 'published') {
-        publishSection.style.display = 'block';
-    } else {
-        publishSection.style.display = 'none';
-    }
-}
-
-// Image removal toggle
-function toggleRemoveImage() {
-    const checkbox = document.getElementById('removeFeaturedImage');
-    checkbox.checked = !checkbox.checked;
-    toggleImageRemoval();
-}
-
-function toggleImageRemoval() {
-    const checkbox = document.getElementById('removeFeaturedImage');
-    const currentImage = document.getElementById('currentFeaturedImage');
-    
-    if (checkbox.checked) {
-        currentImage.style.opacity = '0.3';
-        currentImage.style.filter = 'grayscale(100%)';
-    } else {
-        currentImage.style.opacity = '1';
-        currentImage.style.filter = 'grayscale(0%)';
-    }
-}
-
-// Preview new image upload
-function previewNewImage(event) {
-    const file = event.target.files[0];
-    const container = document.getElementById('imagePreviewContainer');
-    const preview = document.getElementById('imagePreview');
-    
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            preview.src = e.target.result;
-            container.classList.remove('hidden');
-        }
-        reader.readAsDataURL(file);
-    } else {
-        container.classList.add('hidden');
-    }
-}
-
-// Save as draft function
-function saveDraft() {
-    const form = document.getElementById('editPostForm');
-    const statusField = document.getElementById('status');
-    statusField.value = 'draft';
-    form.submit();
-}
-
-// Auto-save functionality (optional)
-let autoSaveTimer;
-function setupAutoSave() {
-    const form = document.getElementById('editPostForm');
-    const indicator = document.getElementById('autoSaveIndicator');
-    
-    // Clear existing timer
-    if (autoSaveTimer) {
-        clearTimeout(autoSaveTimer);
-    }
-    
-    // Set new timer
-    autoSaveTimer = setTimeout(() => {
-        // Auto-save logic here (AJAX call)
-        indicator.classList.remove('bg-gray-300');
-        indicator.classList.add('bg-green-500');
-        setTimeout(() => {
-            indicator.classList.remove('bg-green-500');
-            indicator.classList.add('bg-gray-300');
-        }, 2000);
-    }, 30000); // Auto-save setiap 30 detik
-}
-
-// Update selected tags counter
-document.addEventListener('DOMContentLoaded', function() {
-    const tagCheckboxes = document.querySelectorAll('input[name="tags[]"]');
-    const counter = document.getElementById('selectedTagsCount');
-    
-    tagCheckboxes.forEach(checkbox => {
-        checkbox.addEventListener('change', function() {
-            const selected = document.querySelectorAll('input[name="tags[]"]:checked').length;
-            counter.textContent = selected;
+        // Auto-generate slug dari name saat creating
+        static::creating(function ($category) {
+            if (empty($category->slug)) {
+                $category->slug = Str::slug($category->name);
+            }
         });
-    });
-    
-    // Setup auto-save
-    setupAutoSave();
-    
-    // Setup form change detection untuk auto-save
-    const formInputs = document.querySelectorAll('#editPostForm input, #editPostForm textarea, #editPostForm select');
-    formInputs.forEach(input => {
-        input.addEventListener('change', setupAutoSave);
-        input.addEventListener('keyup', setupAutoSave);
-    });
-});
-</script>
+
+        // Update slug saat name berubah
+        static::updating(function ($category) {
+            if ($category->isDirty('name')) {
+                $category->slug = Str::slug($category->name);
+            }
+        });
+    }
+
+    /**
+     * Relationship: Category belongs to Parent Category
+     * Self-referencing relationship untuk hierarchical structure
+     */
+    public function parent()
+    {
+        return $this->belongsTo(Category::class, 'parent_id');
+    }
+
+    /**
+     * Relationship: Category has many Child Categories
+     * Self-referencing relationship untuk hierarchical structure
+     */
+    public function children()
+    {
+        return $this->hasMany(Category::class, 'parent_id')
+                   ->orderBy('sort_order');
+    }
+
+    /**
+     * Relationship: Category has many Posts
+     * Satu kategori dapat memiliki banyak posts
+     */
+
+    /**
+     * Scope: Filter active categories only
+     * Usage: Category::active()->get()
+     */
+public function posts() { return $this->hasMany(Post::class); }
+public function scopeActive($q) { return $q->where('is_active', true); }
+
+
+    /**
+     * Scope: Get root categories (no parent)
+     * Usage: Category::roots()->get()
+     */
+    public function scopeRoots($query)
+    {
+        return $query->whereNull('parent_id');
+    }
+
+    /**
+     * Scope: Order by sort_order
+     * Usage: Category::sorted()->get()
+     */
+    public function scopeSorted($query)
+    {
+        return $query->orderBy('sort_order');
+    }
+
+    /**
+     * Get all posts count including from child categories
+     * Menghitung total posts di kategori ini dan child categories
+     */
+    public function getTotalPostsCountAttribute()
+    {
+        $count = $this->posts()->count();
+        
+        foreach ($this->children as $child) {
+            $count += $child->total_posts_count;
+        }
+        
+        return $count;
+    }
+
+    /**
+     * Get breadcrumb path untuk hierarchical navigation
+     * Returns array of parent categories
+     */
+    public function getBreadcrumbAttribute()
+    {
+        $breadcrumb = collect([$this]);
+        $parent = $this->parent;
+        
+        while ($parent) {
+            $breadcrumb->prepend($parent);
+            $parent = $parent->parent;
+        }
+        
+        return $breadcrumb;
+    }
+}
+```
+
+#### 3. Update app/Models/Tag.php
+
+```php
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class Tag extends Model
+{
+    protected $fillable = ['name','slug','description','color','is_active'];
+
+    public function posts() {
+        return $this->belongsToMany(Post::class, 'post_tags');
+    }
+
+    public function scopeActive($q) {
+        return $q->where('is_active', true);
+    }
+}
+```
+
+#### 4. Buat file database migration dengan nama 2025_09_18_000001_add_is_active_to_tags_table.php
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration {
+    public function up(): void
+    {
+        Schema::table('tags', function (Blueprint $table) {
+            $table->boolean('is_active')->default(true)->after('description');
+            $table->index('is_active');
+        });
+    }
+    public function down(): void
+    {
+        Schema::table('tags', function (Blueprint $table) {
+            $table->dropIndex(['is_active']);
+            $table->dropColumn('is_active');
+        });
+    }
+};
+```
+
+#### 5. Buat file database migration dengan nama 
+2025_09_20_000001_add_is_active_to_tags_table.php
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration {
+    public function up(): void {
+        Schema::table('tags', function (Blueprint $table) {
+            if (!Schema::hasColumn('tags', 'is_active')) {
+                $table->boolean('is_active')->default(true)->after('color');
+                $table->index('is_active');
+            }
+        });
+    }
+    public function down(): void {
+        Schema::table('tags', function (Blueprint $table) {
+            if (Schema::hasColumn('tags', 'is_active')) {
+                $table->dropIndex(['is_active']);
+                $table->dropColumn('is_active');
+            }
+        });
+    }
+};
+```
+```bash
+php artisan migrate:refresh
+php artisan db:seed
+```
+
+#### 6. Update app/Http/Requests/CategoryRequest.php
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+
+class CategoryRequest extends FormRequest
+{
+    public function authorize(): bool { return true; }
+
+    public function rules(): array
+    {
+        $id = $this->route('category')?->id; // null kalau create
+        return [
+            'name'        => ['required','string','max:100'],
+            'slug'        => ['nullable','string','max:120', Rule::unique('categories','slug')->ignore($id)],
+            'parent_id'   => ['nullable','exists:categories,id'],
+            'is_active'   => ['boolean'],
+            'description' => ['nullable','string','max:500'],
+        ];
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->merge([
+            'is_active' => filter_var($this->is_active, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? false,
+        ]);
+    }
+}
+```
+
+#### 7. Update app/Http/Requests/TagRequest.php
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+
+class TagRequest extends FormRequest
+{
+    public function authorize(): bool { return true; }
+
+    public function rules(): array
+    {
+        $id = $this->route('tag')?->id; // null saat create
+        return [
+            'name'        => ['required','string','max:100'],
+            'slug'        => ['nullable','string','max:120', Rule::unique('tags','slug')->ignore($id)],
+            'description' => ['nullable','string','max:500'],
+            'color'       => ['nullable','string','max:7'], // e.g. #3B82F6
+            'is_active'   => ['sometimes','boolean'],
+        ];
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->merge([
+            'is_active' => filter_var($this->is_active, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? true,
+        ]);
+    }
+}
+```
+
+#### 8. Buat file resources/views/blog/index.blade.php
+
+```php 
+@extends('layouts.app')
+@section('title','Blog')
+@section('content')
+  <div class="grid md:grid-cols-3 gap-6">
+    @foreach($posts as $post)
+      <a href="{{ route('blog.show', $post->slug) }}" class="card block hover:shadow-md transition">
+        @if($post->featured_image)
+          <img class="rounded-md mb-3 w-full h-40 object-cover" src="{{ Storage::url($post->featured_image) }}">
+        @endif
+        <h3 class="font-semibold text-lg">{{ $post->title }}</h3>
+        <p class="text-sm text-gray-600 mt-1">
+          {{ $post->category->name ?? 'Uncategorized' }} • {{ $post->published_at?->format('Y-m-d') }}
+        </p>
+        @if($post->excerpt)
+          <p class="mt-2 text-gray-700">{{ Str::limit($post->excerpt, 120) }}</p>
+        @endif
+      </a>
+    @endforeach
+  </div>
+  <div class="mt-6">{{ $posts->links() }}</div>
+@endsection
+```
+#### 9. Buat file resources/views/blog/show.blade.php
+
+```php
+@extends('layouts.app')
+@section('title', $post->title)
+@section('content')
+  <article class="prose max-w-none card">
+    <h1>{{ $post->title }}</h1>
+    <p class="text-sm text-gray-600">
+      {{ $post->category->name ?? 'Uncategorized' }} • by {{ $post->user->name ?? '-' }} •
+      {{ $post->published_at?->format('Y-m-d H:i') }}
+    </p>
+    @if($post->featured_image)
+      <img class="rounded-md my-4 w-full object-cover" src="{{ Storage::url($post->featured_image) }}">
+    @endif
+    @if(filled($post->excerpt))
+      <div class="p-4 bg-gray-50 border rounded">{{ $post->excerpt }}</div>
+    @endif
+    <div class="mt-4">{!! nl2br(e($post->content)) !!}</div>
+
+    @if($post->tags->count())
+      <div class="mt-6 flex flex-wrap gap-2">
+        @foreach($post->tags as $tag)
+          <span class="px-2 py-1 text-xs rounded bg-blue-50 text-blue-700 border">#{{ $tag->name }}</span>
+        @endforeach
+      </div>
+    @endif
+  </article>
 @endsection
 ```
 
-#### **Bagian 2: Advanced Delete Operations (20 menit)**
+#### 10. Buat file resources/views/blog/category.blade.php
 
-##### Step 2.1: Enhanced Delete Method dengan Cascade Handling
-
-**Update method `destroy` dalam PostController.php:**
 ```php
-/**
- * Delete post dengan advanced cascade handling dan cleanup
- */
-public function destroy(Post $post)
-{
-    // Authorization check (dalam praktik nyata)
-    // $this->authorize('delete', $post);
-    
-    // Start database transaction
-    \DB::beginTransaction();
-    
-    try {
-        $title = $post->title;
-        $postId = $post->id;
-        
-        // Store data untuk logging
-        $deletionData = [
-            'post_id' => $postId,
-            'title' => $title,
-            'user_id' => $post->user_id,
-            'category_id' => $post->category_id,
-            'featured_image' => $post->featured_image,
-            'tags_count' => $post->tags()->count(),
-            'comments_count' => $post->comments()->count(),
-            'deleted_by' => auth()->id() ?? 'system',
-            'deleted_at' => now()
-        ];
-
-        // Handle cascade relationships dan cleanup
-        
-        // 1. Handle Comments (soft delete to preserve data integrity)
-        if ($post->comments()->exists()) {
-            $post->comments()->delete(); // Soft delete if using SoftDeletes
-        }
-        
-        // 2. Detach Many-to-Many relationships (tags)
-        $post->tags()->detach();
-        
-        // 3. Handle Media files yang terkait dengan post
-        $post->media()->each(function ($media) {
-            // Delete physical files
-            if (\Storage::disk('public')->exists($media->path)) {
-                \Storage::disk('public')->delete($media->path);
-            }
-            // Delete media record
-            $media->delete();
-        });
-        
-        // 4. Delete featured image file
-        if ($post->featured_image) {
-            \Storage::disk('public')->delete($post->featured_image);
-        }
-        
-        // 5. Log deletion untuk audit trail sebelum delete
-        \Log::info('Post deletion initiated', $deletionData);
-        
-        // 6. Finally delete the post (soft delete)
-        $post->delete();
-        
-        // Commit transaction
-        \DB::commit();
-        
-        // Flash success message
-        return redirect()->route('posts.index')
-                        ->with('success', "Post '{$title}' and all related data successfully deleted");
-
-    } catch (\Exception $e) {
-        // Rollback transaction
-        \DB::rollback();
-        
-        \Log::error('Post deletion failed', [
-            'post_id' => $post->id,
-            'error' => $e->getMessage(),
-            'stack_trace' => $e->getTraceAsString(),
-            'timestamp' => now()
-        ]);
-
-        return redirect()->route('posts.index')
-                        ->with('error', 'Failed to delete post: ' . $e->getMessage());
-    }
-}
+@extends('layouts.app')
+@section('title', 'Category: '.$category->name)
+@section('content')
+  <h1 class="text-2xl font-bold mb-4">Category: {{ $category->name }}</h1>
+  @include('blog.partials.posts-grid', ['posts' => $posts])
+@endsection
 ```
 
-##### Step 2.2: Bulk Delete Operations
+#### 11. Buat file resources/views/blog/tag.blade.php
 
-**Tambahkan methods baru di PostController:**
 ```php
-/**
- * Bulk delete multiple posts
- */
-public function bulkDelete(Request $request)
-{
-    $validated = $request->validate([
-        'post_ids' => 'required|array|min:1',
-        'post_ids.*' => 'exists:posts,id',
-        'confirm_deletion' => 'required|accepted'
-    ]);
-
-    \DB::beginTransaction();
-    
-    try {
-        $posts = Post::whereIn('id', $validated['post_ids'])->get();
-        $deletedCount = 0;
-        $errors = [];
-
-        foreach ($posts as $post) {
-            try {
-                // Use existing destroy logic
-                $this->performPostDeletion($post);
-                $deletedCount++;
-            } catch (\Exception $e) {
-                $errors[] = "Failed to delete '{$post->title}': " . $e->getMessage();
-            }
-        }
-
-        \DB::commit();
-
-        if ($deletedCount > 0) {
-            $message = "Successfully deleted {$deletedCount} post(s)";
-            if (!empty($errors)) {
-                $message .= ". Some deletions failed: " . implode(', ', $errors);
-            }
-            return response()->json(['success' => true, 'message' => $message]);
-        } else {
-            return response()->json(['success' => false, 'message' => 'No posts were deleted']);
-        }
-
-    } catch (\Exception $e) {
-        \DB::rollback();
-        return response()->json(['success' => false, 'message' => 'Bulk deletion failed: ' . $e->getMessage()]);
-    }
-}
-
-/**
- * Bulk update status untuk multiple posts
- */
-public function bulkUpdateStatus(Request $request)
-{
-    $validated = $request->validate([
-        'post_ids' => 'required|array|min:1',
-        'post_ids.*' => 'exists:posts,id',
-        'status' => 'required|in:draft,published,archived'
-    ]);
-
-    try {
-        $updated = Post::whereIn('id', $validated['post_ids'])
-                      ->update([
-                          'status' => $validated['status'],
-                          'updated_at' => now(),
-                          // Set published_at jika status published
-                          'published_at' => $validated['status'] === 'published' ? now() : null
-                      ]);
-
-        \Log::info('Bulk status update', [
-            'post_ids' => $validated['post_ids'],
-            'new_status' => $validated['status'],
-            'updated_count' => $updated,
-            'performed_by' => auth()->id() ?? 'system'
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'message' => "Successfully updated {$updated} post(s) to {$validated['status']} status"
-        ]);
-
-    } catch (\Exception $e) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Bulk update failed: ' . $e->getMessage()
-        ]);
-    }
-}
-
-/**
- * Helper method untuk post deletion logic
- */
-private function performPostDeletion(Post $post)
-{
-    // Handle comments
-    $post->comments()->delete();
-    
-    // Detach tags
-    $post->tags()->detach();
-    
-    // Delete media files
-    $post->media()->each(function ($media) {
-        if (\Storage::disk('public')->exists($media->path)) {
-            \Storage::disk('public')->delete($media->path);
-        }
-        $media->delete();
-    });
-    
-    // Delete featured image
-    if ($post->featured_image) {
-        \Storage::disk('public')->delete($post->featured_image);
-    }
-    
-    // Delete post
-    $post->delete();
-}
+@extends('layouts.app')
+@section('title', 'Tag: '.$tag->name)
+@section('content')
+  <h1 class="text-2xl font-bold mb-4">Tag: #{{ $tag->name }}</h1>
+  @include('blog.partials.posts-grid', ['posts' => $posts])
+@endsection
 ```
 
-##### Step 2.3: Enhanced Posts Index dengan Bulk Operations
+#### 12. Buat file resources/views/blog/search.blade.php
 
-**Tambahkan bulk operations UI ke posts/index.blade.php:**
-```html
-<!-- Tambahkan setelah Statistics Cards, sebelum Filters and Actions -->
+```php
+@extends('layouts.app')
+@section('title','Search')
+@section('content')
+  <form method="GET" action="{{ route('posts.search') }}" class="mb-4 flex gap-2">
+    <input name="q" value="{{ $searchTerm }}" class="input-field flex-1" placeholder="Search posts...">
+    <button class="btn-primary">Search</button>
+  </form>
 
-<!-- Bulk Actions Bar (hidden by default) -->
-<div class="card hidden" id="bulkActionsBar">
-    <div class="flex items-center justify-between">
-        <div class="flex items-center space-x-4">
-            <span class="text-sm font-medium text-gray-700">
-                <span id="selectedCount">0</span> post(s) selected
-            </span>
-            
-            <div class="flex items-center space-x-2">
-                <select id="bulkAction" class="input-field text-sm">
-                    <option value="">Choose Action</option>
-                    <option value="publish">Publish Selected</option>
-                    <option value="draft">Move to Draft</option>
-                    <option value="archive">Archive Selected</option>
-                    <option value="delete">Delete Selected</option>
-                </select>
-                
-                <button type="button" 
-                        class="btn-primary text-sm"
-                        onclick="performBulkAction()">
-                    Apply
-                </button>
-            </div>
-        </div>
-        
-        <button type="button" 
-                class="text-gray-400 hover:text-gray-600"
-                onclick="clearSelection()">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-            </svg>
-        </button>
-    </div>
+  @if($posts instanceof \Illuminate\Pagination\LengthAwarePaginator)
+    @include('blog.partials.posts-grid', ['posts' => $posts])
+    <div class="mt-6">{{ $posts->links() }}</div>
+  @else
+    <p class="text-gray-600">Masukkan kata kunci untuk mencari.</p>
+  @endif
+@endsection
+```
+
+#### 13. Buat file resources/views/blog/partials/posts-grid.blade.php
+
+```php
+<div class="grid md:grid-cols-3 gap-6">
+  @forelse($posts as $post)
+    <a href="{{ route('blog.show', $post->slug) }}" class="card block hover:shadow-md transition">
+      @if($post->featured_image)
+        <img class="rounded-md mb-3 w-full h-40 object-cover" src="{{ Storage::url($post->featured_image) }}">
+      @endif
+      <h3 class="font-semibold text-lg">{{ $post->title }}</h3>
+      <p class="text-sm text-gray-600 mt-1">
+        {{ $post->category->name ?? 'Uncategorized' }} • {{ $post->published_at?->format('Y-m-d') }}
+      </p>
+      @if($post->excerpt)
+        <p class="mt-2 text-gray-700">{{ Str::limit($post->excerpt, 120) }}</p>
+      @endif
+    </a>
+  @empty
+    <p class="text-gray-600">No posts.</p>
+  @endforelse
 </div>
-
-<!-- Update Posts Table dengan bulk selection -->
-<!-- Dalam thead, tambahkan checkbox column di awal -->
-<th class="px-6 py-3 text-left">
-    <input type="checkbox" 
-           id="selectAll"
-           class="rounded border-gray-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-           onchange="toggleSelectAll()">
-</th>
-
-<!-- Dalam tbody, tambahkan checkbox untuk setiap row -->
-@forelse($posts as $post)
-    <tr class="hover:bg-gray-50" id="post-row-{{ $post->id }}">
-        <td class="px-6 py-4">
-            <input type="checkbox" 
-                   name="selected_posts[]"
-                   value="{{ $post->id }}"
-                   class="post-checkbox rounded border-gray-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-                   onchange="updateBulkSelection()">
-        </td>
-        <!-- Rest of existing table columns -->
-        <!-- ... -->
-    </tr>
-@empty
-    <!-- ... existing empty state -->
-@endforelse
-
-<!-- Tambahkan JavaScript untuk bulk operations di akhir file -->
-<script>
-// Bulk operations JavaScript
-let selectedPosts = [];
-
-function toggleSelectAll() {
-    const selectAllCheckbox = document.getElementById('selectAll');
-    const postCheckboxes = document.querySelectorAll('.post-checkbox');
-    
-    postCheckboxes.forEach(checkbox => {
-        checkbox.checked = selectAllCheckbox.checked;
-    });
-    
-    updateBulkSelection();
-}
-
-function updateBulkSelection() {
-    const checkboxes = document.querySelectorAll('.post-checkbox:checked');
-    const bulkBar = document.getElementById('bulkActionsBar');
-    const selectedCount = document.getElementById('selectedCount');
-    
-    selectedPosts = Array.from(checkboxes).map(cb => cb.value);
-    
-    if (selectedPosts.length > 0) {
-        bulkBar.classList.remove('hidden');
-        selectedCount.textContent = selectedPosts.length;
-    } else {
-        bulkBar.classList.add('hidden');
-    }
-    
-    // Update select all checkbox state
-    const allCheckboxes = document.querySelectorAll('.post-checkbox');
-    const selectAllCheckbox = document.getElementById('selectAll');
-    
-    if (selectedPosts.length === allCheckboxes.length) {
-        selectAllCheckbox.checked = true;
-        selectAllCheckbox.indeterminate = false;
-    } else if (selectedPosts.length > 0) {
-        selectAllCheckbox.checked = false;
-        selectAllCheckbox.indeterminate = true;
-    } else {
-        selectAllCheckbox.checked = false;
-        selectAllCheckbox.indeterminate = false;
-    }
-}
-
-function clearSelection() {
-    document.querySelectorAll('.post-checkbox').forEach(cb => cb.checked = false);
-    document.getElementById('selectAll').checked = false;
-    updateBulkSelection();
-}
-
-function performBulkAction() {
-    const action = document.getElementById('bulkAction').value;
-    
-    if (!action) {
-        alert('Please select an action');
-        return;
-    }
-    
-    if (selectedPosts.length === 0) {
-        alert('Please select posts to perform action on');
-        return;
-    }
-    
-    const actionText = document.getElementById('bulkAction').selectedOptions[0].text;
-    
-    if (action === 'delete') {
-        if (!confirm(`Are you sure you want to delete ${selectedPosts.length} selected post(s)? This action cannot be undone.`)) {
-            return;
-        }
-        
-        performBulkDelete();
-    } else {
-        if (!confirm(`Are you sure you want to ${actionText.toLowerCase()} ${selectedPosts.length} selected post(s)?`)) {
-            return;
-        }
-        
-        performBulkStatusUpdate(action);
-    }
-}
-
-function performBulkDelete() {
-    fetch('/posts/bulk-delete', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
-            'Accept': 'application/json',
-        },
-        body: JSON.stringify({
-            post_ids: selectedPosts,
-            confirm_deletion: true
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showNotification(data.message, 'success');
-            // Remove deleted rows from table
-            selectedPosts.forEach(postId => {
-                const row = document.getElementById(`post-row-${postId}`);
-                if (row) row.remove();
-            });
-            clearSelection();
-        } else {
-            showNotification(data.message, 'error');
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        showNotification('An error occurred during bulk deletion', 'error');
-    });
-}
-
-function performBulkStatusUpdate(status) {
-    fetch('/posts/bulk-update-status', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
-            'Accept': 'application/json',
-        },
-        body: JSON.stringify({
-            post_ids: selectedPosts,
-            status: status
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            showNotification(data.message, 'success');
-            // Refresh page to show updated statuses
-            location.reload();
-        } else {
-            showNotification(data.message, 'error');
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        showNotification('An error occurred during bulk update', 'error');
-    });
-}
-
-function showNotification(message, type) {
-    // Create notification element
-    const notification = document.createElement('div');
-    notification.className = `fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 ${
-        type === 'success' ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'
-    }`;
-    notification.innerHTML = `
-        <div class="flex items-center">
-            <span>${message}</span>
-            <button onclick="this.parentElement.parentElement.remove()" class="ml-4 text-sm underline">Close</button>
-        </div>
-    `;
-    
-    document.body.appendChild(notification);
-    
-    // Auto remove after 5 seconds
-    setTimeout(() => {
-        if (notification.parentElement) {
-            notification.remove();
-        }
-    }, 5000);
-}
-
-// Enhanced delete single post function
-function deletePost(postId) {
-    if (confirm('Are you sure you want to delete this post? This action cannot be undone.')) {
-        fetch(`/posts/${postId}`, {
-            method: 'DELETE',
-            headers: {
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
-                'Accept': 'application/json',
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showNotification(data.message || 'Post deleted successfully', 'success');
-                // Remove row from table
-                const row = document.getElementById(`post-row-${postId}`);
-                if (row) row.remove();
-            } else {
-                showNotification(data.message || 'Error deleting post', 'error');
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showNotification('Error deleting post', 'error');
-        });
-    }
-}
-</script>
 ```
 
-#### **Bagian 3: Advanced Routes dan API Enhancements (15 menit)**
+```bash 
+php artisan storage:link
+```
 
-##### Step 3.1: Add Bulk Operation Routes
+#### 14. Update app/Models/Tag.php
 
-**Tambahkan routes untuk bulk operations di routes/web.php:**
 ```php
-// Tambahkan setelah existing posts routes
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+
+class Tag extends Model
+{
+    protected $fillable = ['name','slug','description','color','is_active'];
+
+    public function posts() {
+        return $this->belongsToMany(Post::class, 'post_tags');
+    }
+
+    public function scopeActive($q) {
+        return $q->where('is_active', true);
+    }
+}
+```
+
+#### 15. app/Http/Requests/TagRequest.php
+
+```php
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+
+class TagRequest extends FormRequest
+{
+    public function authorize(): bool { return true; }
+
+    public function rules(): array
+    {
+        $id = $this->route('tag')?->id; // null saat create
+        return [
+            'name'        => ['required','string','max:100'],
+            'slug'        => ['nullable','string','max:120', Rule::unique('tags','slug')->ignore($id)],
+            'description' => ['nullable','string','max:500'],
+            'color'       => ['nullable','string','max:7'], // e.g. #3B82F6
+            'is_active'   => ['sometimes','boolean'],
+        ];
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $this->merge([
+            'is_active' => filter_var($this->is_active, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? true,
+        ]);
+    }
+}
+```
+
+#### 16. app/Http/Controllers/TagController.php
+
+```php
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Requests\TagRequest;
+use App\Models\Tag;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+
+class TagController extends Controller
+{
+    public function index(Request $request)
+    {
+        $search = $request->query('q');
+        $status = $request->query('status'); // all|active|inactive
+
+        $tags = Tag::query()
+            ->when($search, fn($q) =>
+                $q->where('name','like',"%{$search}%")
+                  ->orWhere('slug','like',"%{$search}%")
+                  ->orWhere('description','like',"%{$search}%")
+            )
+            ->when($status === 'active', fn($q) => $q->where('is_active', true))
+            ->when($status === 'inactive', fn($q) => $q->where('is_active', false))
+            ->orderBy('name')
+            ->paginate(10)
+            ->withQueryString();
+
+        return view('tags.index', compact('tags','search','status'));
+    }
+
+    public function create()
+    {
+        return view('tags.create');
+    }
+
+    public function store(TagRequest $request)
+    {
+        $data = $request->validated();
+
+        if (blank($data['slug'] ?? null)) {
+            $data['slug'] = Str::slug($data['name']);
+        }
+
+        Tag::create($data);
+
+        return redirect()->route('tags.index')->with('success','Tag created.');
+    }
+
+    public function edit(Tag $tag)
+    {
+        return view('tags.edit', compact('tag'));
+    }
+
+    public function update(TagRequest $request, Tag $tag)
+    {
+        $data = $request->validated();
+
+        if (blank($data['slug'] ?? null)) {
+            $data['slug'] = Str::slug($data['name']);
+        }
+
+        $tag->update($data);
+
+        return redirect()->route('tags.index')->with('success','Tag updated.');
+    }
+
+    public function destroy(Tag $tag)
+    {
+        // optional: prevent delete if still used by posts
+        if ($tag->posts()->exists()) {
+            return back()->with('error','Cannot delete: tag is attached to posts.');
+        }
+
+        $tag->delete();
+        return back()->with('success','Tag deleted.');
+    }
+}
+```
+
+#### 17. Update Route web.php
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\PostController;
+use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\TagController;
+use App\Http\Controllers\CommentController;
+use App\Http\Controllers\DashboardController;
+/*
+|--------------------------------------------------------------------------
+| Web Routes - Praktikum Cloud Computing ITK Week 4
+|--------------------------------------------------------------------------
+|
+| Routes untuk CRUD operations dengan Laravel Resource Controllers
+| Menggunakan RESTful conventions untuk consistent API design
+|
+*/
+
+// Homepage route (dari week 2)
+Route::get('/', function () {
+    return view('welcome');
+})->name('home');
+
+// Dashboard route untuk admin interface
+Route::get('/dashboard', function () {
+    return view('dashboard');
+})->name('dashboard');
 
 /*
 |--------------------------------------------------------------------------
-| Bulk Operations Routes
+| Resource Routes untuk CRUD Operations
 |--------------------------------------------------------------------------
 */
 
-// Bulk operations untuk posts
-Route::prefix('posts')->name('posts.')->group(function () {
-    Route::post('bulk-delete', [PostController::class, 'bulkDelete'])->name('bulk-delete');
-    Route::post('bulk-update-status', [PostController::class, 'bulkUpdateStatus'])->name('bulk-update-status');
-    Route::post('bulk-update-category', [PostController::class, 'bulkUpdateCategory'])->name('bulk-update-category');
-});
+// Posts management routes
+Route::resource('posts', PostController::class)->names([
+    'index' => 'posts.index',       // GET /posts - List all posts
+    'create' => 'posts.create',     // GET /posts/create - Show create form
+    'store' => 'posts.store',       // POST /posts - Store new post
+    'show' => 'posts.show',         // GET /posts/{post} - Show single post
+    'edit' => 'posts.edit',         // GET /posts/{post}/edit - Show edit form
+    'update' => 'posts.update',     // PUT/PATCH /posts/{post} - Update post
+    'destroy' => 'posts.destroy',   // DELETE /posts/{post} - Delete post
+]);
 
-// Restore deleted posts (soft delete recovery)
-Route::prefix('admin')->name('admin.')->group(function () {
-    Route::get('deleted-posts', [PostController::class, 'deletedPosts'])->name('deleted-posts');
-    Route::post('posts/{id}/restore', [PostController::class, 'restore'])->name('posts.restore');
-    Route::delete('posts/{id}/force-delete', [PostController::class, 'forceDelete'])->name('posts.force-delete');
-});
+// Categories management routes
+Route::resource('categories', CategoryController::class)->except([
+    'show' // Categories tidak memerlukan show page individual
+]);
+
+// Tags management routes  
+Route::resource('tags', TagController::class)->except([
+    'show' // Tags tidak memerlukan show page individual
+]);
+
+// Comments routes (nested dalam posts)
+Route::resource('posts.comments', CommentController::class)->except([
+    'index', 'show' // Comments di-handle dalam post show page
+])->shallow(); // Shallow nesting untuk edit/update/delete
+
+/*
+|--------------------------------------------------------------------------
+| Additional Routes untuk Enhanced Functionality
+|--------------------------------------------------------------------------
+*/
+
+// Route untuk public post viewing (tanpa authentication)
+Route::get('/blog', [PostController::class, 'publicIndex'])->name('blog.index');
+Route::get('/blog/{post:slug}', [PostController::class, 'publicShow'])->name('blog.show');
+
+// Route untuk category filtering
+Route::get('/category/{category:slug}', [PostController::class, 'byCategory'])->name('posts.by-category');
+
+// Route untuk tag filtering
+Route::get('/tag/{tag:slug}', [PostController::class, 'byTag'])->name('posts.by-tag');
+
+// Search functionality
+Route::get('/search', [PostController::class, 'search'])->name('posts.search');
+
+/*
+|--------------------------------------------------------------------------
+| Testing Routes untuk Development
+|--------------------------------------------------------------------------
+*/
+
+// Route testing untuk development purposes
+Route::get('/test-data', function () {
+    return response()->json([
+        'posts_count' => \App\Models\Post::count(),
+        'categories_count' => \App\Models\Category::count(),
+        'tags_count' => \App\Models\Tag::count(),
+        'users_count' => \App\Models\User::count(),
+        'latest_post' => \App\Models\Post::latest()->first()?->title ?? 'No posts yet',
+        'timestamp' => now()->toISOString(),
+    ]);
+})->name('test-data');
+Route::resource('tags', \App\Http\Controllers\TagController::class)->except('show');
+
 ```
 
-##### Step 3.2: Enhanced API Routes dengan Advanced Features
+#### 18. Update Route api.php
 
-**Tambahkan advanced API routes di routes/api.php:**
 ```php
+<?php
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\PostApiController;
+use App\Http\Controllers\Api\CategoryApiController;
+
+/*
+|--------------------------------------------------------------------------
+| API Routes - Praktikum Cloud Computing ITK Week 4
+|--------------------------------------------------------------------------
+|
+| API routes untuk AJAX operations dan frontend integration
+| Semua routes menggunakan prefix 'api' dan middleware 'api'
+|
+*/
+
+// API info endpoint
+Route::get('/info', function (Request $request) {
+    return response()->json([
+        'application' => 'Praktikum Cloud Computing ITK',
+        'version' => '1.0.0',
+        'laravel_version' => app()->version(),
+        'api_version' => 'v1',
+        'timestamp' => now()->toISOString(),
+        'endpoints' => [
+            'posts' => '/api/posts',
+            'categories' => '/api/categories',
+            'search' => '/api/posts/search',
+        ]
+    ]);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Posts API Routes
+|--------------------------------------------------------------------------
+*/
+
+// RESTful API untuk posts
+Route::apiResource('posts', PostApiController::class);
+
+// Additional posts API endpoints
+Route::prefix('posts')->group(function () {
+    // Search posts by keyword
+    Route::get('search/{keyword}', [PostApiController::class, 'search'])
+          ->name('api.posts.search');
+    
+    // Get posts by category
+    Route::get('category/{category}', [PostApiController::class, 'byCategory'])
+          ->name('api.posts.by-category');
+    
+    // Get posts by tag
+    Route::get('tag/{tag}', [PostApiController::class, 'byTag'])
+          ->name('api.posts.by-tag');
+    
+    // Get featured posts
+    Route::get('featured', [PostApiController::class, 'featured'])
+          ->name('api.posts.featured');
+    
+    // Get published posts only
+    Route::get('published', [PostApiController::class, 'published'])
+          ->name('api.posts.published');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Categories API Routes
+|--------------------------------------------------------------------------
+*/
+
+// RESTful API untuk categories
+Route::apiResource('categories', CategoryApiController::class);
+
+// Additional categories API endpoints
+Route::prefix('categories')->group(function () {
+    // Get category tree (hierarchical structure)
+    Route::get('tree', [CategoryApiController::class, 'tree'])
+          ->name('api.categories.tree');
+    
+    // Get active categories only
+    Route::get('active', [CategoryApiController::class, 'active'])
+          ->name('api.categories.active');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Statistics API Routes
+|--------------------------------------------------------------------------
+*/
+
+// Dashboard statistics untuk admin interface
+Route::get('/stats', function () {
+    return response()->json([
+        'total_posts' => \App\Models\Post::count(),
+        'published_posts' => \App\Models\Post::published()->count(),
+        'draft_posts' => \App\Models\Post::where('status', 'draft')->count(),
+        'total_categories' => \App\Models\Category::count(),
+        'total_tags' => \App\Models\Tag::count(),
+        'total_users' => \App\Models\User::count(),
+        'recent_posts' => \App\Models\Post::latest()->take(5)->pluck('title'),
+        'generated_at' => now()->toISOString(),
+    ]);
+})->name('api.stats');
+
 // Tambahkan setelah existing API routes
 
 /*
@@ -1263,935 +940,278 @@ Route::prefix('admin')->name('api.admin.')->group(function () {
         ]);
     })->name('content-metrics');
 });
+
+Route::get('/tags', fn() => \App\Models\Tag::active()->orderBy('name')->get());
 ```
 
-#### **Bagian 4: Transaction Handling dan Error Recovery (20 menit)**
+#### 19. Buat file resources/views/tags/index.blade.php
 
-##### Step 4.1: Advanced Transaction Service Class
-```bash
-# Buat service class untuk transaction handling
-mkdir -p app/Services
-```
-
-**Isi file app/Services/PostService.php:**
 ```php
-<?php
+@extends('layouts.dashboard')
 
-namespace App\Services;
+@section('title','Tags')
+@section('page-title','Tags')
+@section('page-description','Manage post tags')
 
-use App\Models\Post;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
+@section('content')
+<div class="flex items-center justify-between mb-4">
+  <form method="GET" class="flex gap-2">
+    <input name="q" value="{{ $search }}" class="input-field" placeholder="Search tags...">
+    <select name="status" class="input-field">
+      <option value="">All</option>
+      <option value="active" @selected($status==='active')>Active</option>
+      <option value="inactive" @selected($status==='inactive')>Inactive</option>
+    </select>
+    <button class="btn-secondary">Filter</button>
+  </form>
+  <a href="{{ route('tags.create') }}" class="btn-primary">+ New Tag</a>
+</div>
 
-class PostService
-{
-    /**
-     * Create post dengan transaction handling
-     */
-    public function createPost(array $data): array
-    {
-        DB::beginTransaction();
-        
-        try {
-            // Generate slug
-            $data['slug'] = $this->generateUniqueSlug($data['title']);
-            
-            // Handle file upload jika ada
-            if (isset($data['featured_image']) && $data['featured_image']) {
-                $data['featured_image'] = $this->handleFileUpload($data['featured_image'], $data['title']);
-            }
-            
-            // Set published_at jika status published
-            if ($data['status'] === 'published') {
-                $data['published_at'] = now();
-            }
-            
-            // Create post
-            $post = Post::create($data);
-            
-            // Handle tags relationship
-            if (!empty($data['tags'])) {
-                $post->tags()->attach($data['tags']);
-            }
-            
-            // Log activity
-            Log::info('Post created successfully', [
-                'post_id' => $post->id,
-                'title' => $post->title,
-                'user_id' => $data['user_id'] ?? null,
-                'timestamp' => now()
-            ]);
-            
-            DB::commit();
-            
-            return [
-                'success' => true,
-                'post' => $post,
-                'message' => "Post '{$post->title}' created successfully"
-            ];
-            
-        } catch (\Exception $e) {
-            DB::rollback();
-            
-            // Cleanup uploaded file jika ada error
-            if (isset($data['featured_image']) && is_string($data['featured_image'])) {
-                Storage::disk('public')->delete($data['featured_image']);
-            }
-            
-            Log::error('Post creation failed', [
-                'error' => $e->getMessage(),
-                'data' => $data,
-                'timestamp' => now()
-            ]);
-            
-            return [
-                'success' => false,
-                'message' => 'Failed to create post: ' . $e->getMessage()
-            ];
-        }
-    }
-    
-    /**
-     * Update post dengan transaction handling
-     */
-    public function updatePost(Post $post, array $data): array
-    {
-        DB::beginTransaction();
-        
-        try {
-            $originalData = $post->toArray();
-            
-            // Update slug jika title berubah
-            if ($post->title !== $data['title']) {
-                $data['slug'] = $this->generateUniqueSlug($data['title'], $post->id);
-            }
-            
-            // Handle featured image operations
-            $data = $this->handleImageUpdate($post, $data);
-            
-            // Handle publishing logic
-            $data = $this->handlePublishingLogic($post, $data);
-            
-            // Update post
-            $post->update($data);
-            
-            // Handle tags relationship
-            if (array_key_exists('tags', $data)) {
-                if (!empty($data['tags'])) {
-                    $post->tags()->sync($data['tags'], true);
-                } else {
-                    $post->tags()->detach();
-                }
-            }
-            
-            // Log changes
-            Log::info('Post updated successfully', [
-                'post_id' => $post->id,
-                'changes' => $post->getChanges(),
-                'original_data' => $originalData,
-                'timestamp' => now()
-            ]);
-            
-            DB::commit();
-            
-            return [
-                'success' => true,
-                'post' => $post->fresh(),
-                'message' => "Post '{$post->title}' updated successfully"
-            ];
-            
-        } catch (\Exception $e) {
-            DB::rollback();
-            
-            Log::error('Post update failed', [
-                'post_id' => $post->id,
-                'error' => $e->getMessage(),
-                'data' => $data,
-                'timestamp' => now()
-            ]);
-            
-            return [
-                'success' => false,
-                'message' => 'Failed to update post: ' . $e->getMessage()
-            ];
-        }
-    }
-    
-    /**
-     * Delete post dengan cleanup transaction
-     */
-    public function deletePost(Post $post): array
-    {
-        DB::beginTransaction();
-        
-        try {
-            $title = $post->title;
-            $postId = $post->id;
-            
-            // Prepare deletion data untuk logging
-            $deletionData = [
-                'post_id' => $postId,
-                'title' => $title,
-                'featured_image' => $post->featured_image,
-                'tags_count' => $post->tags()->count(),
-                'comments_count' => $post->comments()->count(),
-                'deleted_at' => now()
-            ];
-            
-            // Handle cascade deletions
-            $this->handleCascadeDeletion($post);
-            
-            // Delete the post
-            $post->delete();
-            
-            Log::info('Post deleted successfully', $deletionData);
-            
-            DB::commit();
-            
-            return [
-                'success' => true,
-                'message' => "Post '{$title}' deleted successfully"
-            ];
-            
-        } catch (\Exception $e) {
-            DB::rollback();
-            
-            Log::error('Post deletion failed', [
-                'post_id' => $post->id,
-                'error' => $e->getMessage(),
-                'timestamp' => now()
-            ]);
-            
-            return [
-                'success' => false,
-                'message' => 'Failed to delete post: ' . $e->getMessage()
-            ];
-        }
-    }
-    
-    /**
-     * Bulk operations dengan transaction
-     */
-    public function bulkUpdateStatus(array $postIds, string $status): array
-    {
-        DB::beginTransaction();
-        
-        try {
-            $posts = Post::whereIn('id', $postIds)->get();
-            $updateData = [
-                'status' => $status,
-                'updated_at' => now()
-            ];
-            
-            // Set published_at jika status published
-            if ($status === 'published') {
-                $updateData['published_at'] = now();
-            }
-            
-            $updated = Post::whereIn('id', $postIds)->update($updateData);
-            
-            Log::info('Bulk status update completed', [
-                'post_ids' => $postIds,
-                'new_status' => $status,
-                'updated_count' => $updated,
-                'timestamp' => now()
-            ]);
-            
-            DB::commit();
-            
-            return [
-                'success' => true,
-                'message' => "Successfully updated {$updated} post(s) to {$status} status",
-                'updated_count' => $updated
-            ];
-            
-        } catch (\Exception $e) {
-            DB::rollback();
-            
-            Log::error('Bulk status update failed', [
-                'post_ids' => $postIds,
-                'status' => $status,
-                'error' => $e->getMessage(),
-                'timestamp' => now()
-            ]);
-            
-            return [
-                'success' => false,
-                'message' => 'Failed to update posts: ' . $e->getMessage()
-            ];
-        }
-    }
-    
-    /*
-    |--------------------------------------------------------------------------
-    | Helper Methods
-    |--------------------------------------------------------------------------
-    */
-    
-    private function generateUniqueSlug(string $title, ?int $excludeId = null): string
-    {
-        $slug = \Str::slug($title);
-        $originalSlug = $slug;
-        $counter = 1;
-        
-        while (true) {
-            $query = Post::where('slug', $slug);
-            
-            if ($excludeId) {
-                $query->where('id', '!=', $excludeId);
-            }
-            
-            if (!$query->exists()) {
-                break;
-            }
-            
-            $slug = $originalSlug . '-' . $counter;
-            $counter++;
-        }
-        
-        return $slug;
-    }
-    
-    private function handleFileUpload($file, string $title): string
-    {
-        $filename = time() . '_' . \Str::slug($title) . '.' . $file->getClientOriginalExtension();
-        return $file->storeAs('posts/featured-images', $filename, 'public');
-    }
-    
-    private function handleImageUpdate(Post $post, array $data): array
-    {
-        if (isset($data['remove_featured_image']) && $data['remove_featured_image']) {
-            // Remove existing image
-            if ($post->featured_image) {
-                Storage::disk('public')->delete($post->featured_image);
-                $data['featured_image'] = null;
-            }
-        } elseif (isset($data['featured_image']) && $data['featured_image']) {
-            // Replace existing image
-            if ($post->featured_image) {
-                Storage::disk('public')->delete($post->featured_image);
-            }
-            $data['featured_image'] = $this->handleFileUpload($data['featured_image'], $data['title']);
-        }
-        
-        return $data;
-    }
-    
-    private function handlePublishingLogic(Post $post, array $data): array
-    {
-        if (isset($data['schedule_publish']) && $data['schedule_publish'] && isset($data['published_at'])) {
-            $publishDate = \Carbon\Carbon::parse($data['published_at']);
-            if ($publishDate->isFuture()) {
-                $data['status'] = 'scheduled';
-            }
-        } elseif ($data['status'] === 'published' && $post->status !== 'published') {
-            $data['published_at'] = now();
-        }
-        
-        return $data;
-    }
-    
-    private function handleCascadeDeletion(Post $post): void
-    {
-        // Soft delete comments
-        $post->comments()->delete();
-        
-        // Detach tags
-        $post->tags()->detach();
-        
-        // Delete media files
-        $post->media()->each(function ($media) {
-            if (Storage::disk('public')->exists($media->path)) {
-                Storage::disk('public')->delete($media->path);
-            }
-            $media->delete();
-        });
-        
-        // Delete featured image
-        if ($post->featured_image) {
-            Storage::disk('public')->delete($post->featured_image);
-        }
-    }
-}
+<div class="card overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="text-left text-gray-600 border-b">
+        <th class="py-2 px-3">Name</th>
+        <th class="py-2 px-3">Slug</th>
+        <th class="py-2 px-3">Status</th>
+        <th class="py-2 px-3">Color</th>
+        <th class="py-2 px-3 w-40">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      @forelse($tags as $tag)
+        <tr class="border-b">
+          <td class="py-2 px-3 font-medium">{{ $tag->name }}</td>
+          <td class="py-2 px-3 text-gray-600">{{ $tag->slug }}</td>
+          <td class="py-2 px-3">
+            <span class="px-2 py-0.5 rounded text-xs
+              {{ $tag->is_active ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-gray-100 text-gray-700 border border-gray-200' }}">
+              {{ $tag->is_active ? 'Active' : 'Inactive' }}
+            </span>
+          </td>
+          <td class="py-2 px-3">
+            @if($tag->color)
+              <span class="inline-flex items-center gap-2">
+                <span class="inline-block w-3 h-3 rounded" style="background: {{ $tag->color }}"></span>
+                <code>{{ $tag->color }}</code>
+              </span>
+            @else
+              <span class="text-gray-400">—</span>
+            @endif
+          </td>
+          <td class="py-2 px-3">
+            <a href="{{ route('tags.edit', $tag) }}" class="text-primary-600 hover:underline mr-3">Edit</a>
+            <form action="{{ route('tags.destroy', $tag) }}" method="POST" class="inline"
+                  onsubmit="return confirm('Delete this tag?');">
+              @csrf @method('DELETE')
+              <button class="text-red-600 hover:underline">Delete</button>
+            </form>
+          </td>
+        </tr>
+      @empty
+        <tr><td colspan="5" class="py-6 text-center text-gray-500">No tags found.</td></tr>
+      @endforelse
+    </tbody>
+  </table>
+</div>
+
+<div class="mt-4">
+  {{ $tags->links() }}
+</div>
+@endsection
 ```
 
-##### Step 4.2: Update Controller untuk menggunakan Service
+#### 20. Buat file resources/views/tags/create.blade.php
 
-**Update PostController methods untuk menggunakan service:**
 ```php
-// Tambahkan di bagian atas class PostController
+@extends('layouts.dashboard')
 
-use App\Services\PostService;
+@section('title','Create Tag')
+@section('page-title','Create Tag')
 
-class PostController extends Controller
-{
-    protected $postService;
+@section('content')
+<div class="max-w-xl">
+  <form action="{{ route('tags.store') }}" method="POST" class="card space-y-4">
+    @csrf
+    <div>
+      <label class="block text-sm font-medium mb-1">Name *</label>
+      <input name="name" value="{{ old('name') }}" class="input-field w-full" required>
+      @error('name') <p class="text-sm text-red-600">{{ $message }}</p> @enderror
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Slug</label>
+      <input name="slug" value="{{ old('slug') }}" class="input-field w-full" placeholder="(auto if empty)">
+      @error('slug') <p class="text-sm text-red-600">{{ $message }}</p> @enderror
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Description</label>
+      <textarea name="description" rows="3" class="input-field w-full">{{ old('description') }}</textarea>
+      @error('description') <p class="text-sm text-red-600">{{ $message }}</p> @enderror
+    </div>
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">Color (#HEX)</label>
+        <input name="color" value="{{ old('color','#3B82F6') }}" class="input-field w-full" maxlength="7">
+        @error('color') <p class="text-sm text-red-600">{{ $message }}</p> @enderror
+      </div>
+      <div class="flex items-end">
+        <label class="inline-flex items-center">
+          <input type="checkbox" name="is_active" value="1" class="mr-2" {{ old('is_active', true) ? 'checked' : '' }}>
+          Active
+        </label>
+      </div>
+    </div>
 
-    public function __construct(PostService $postService)
-    {
-        $this->postService = $postService;
-    }
-
-    /**
-     * Store new post menggunakan service
-     */
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'content' => 'required|string|min:10',
-            'excerpt' => 'nullable|string|max:500',
-            'featured_image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
-            'status' => 'required|in:draft,published,archived',
-            'category_id' => 'required|exists:categories,id',
-            'user_id' => 'required|exists:users,id',
-            'tags' => 'nullable|array',
-            'tags.*' => 'exists:tags,id',
-            'meta_title' => 'nullable|string|max:255',
-            'meta_description' => 'nullable|string|max:500',
-            'meta_keywords' => 'nullable|string|max:255',
-            'is_featured' => 'boolean',
-            'allow_comments' => 'boolean',
-        ]);
-
-        $result = $this->postService->createPost($validated);
-
-        if ($result['success']) {
-            return redirect()->route('posts.index')
-                            ->with('success', $result['message']);
-        } else {
-            return redirect()->back()
-                            ->withInput()
-                            ->with('error', $result['message']);
-        }
-    }
-
-    /**
-     * Update post menggunakan service
-     */
-    public function update(Request $request, Post $post)
-    {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'content' => 'required|string|min:10',
-            'excerpt' => 'nullable|string|max:500',
-            'featured_image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048',
-            'remove_featured_image' => 'boolean',
-            'status' => 'required|in:draft,published,archived',
-            'category_id' => 'required|exists:categories,id',
-            'user_id' => 'required|exists:users,id',
-            'tags' => 'nullable|array',
-            'tags.*' => 'exists:tags,id',
-            'meta_title' => 'nullable|string|max:255',
-            'meta_description' => 'nullable|string|max:500',
-            'meta_keywords' => 'nullable|string|max:255',
-            'is_featured' => 'boolean',
-            'allow_comments' => 'boolean',
-            'published_at' => 'nullable|date',
-            'schedule_publish' => 'boolean',
-        ]);
-
-        $result = $this->postService->updatePost($post, $validated);
-
-        if ($result['success']) {
-            return redirect()->route('posts.index')
-                            ->with('success', $result['message']);
-        } else {
-            return redirect()->back()
-                            ->withInput()
-                            ->with('error', $result['message']);
-        }
-    }
-
-    /**
-     * Delete post menggunakan service
-     */
-    public function destroy(Post $post)
-    {
-        $result = $this->postService->deletePost($post);
-
-        if ($result['success']) {
-            return redirect()->route('posts.index')
-                            ->with('success', $result['message']);
-        } else {
-            return redirect()->route('posts.index')
-                            ->with('error', $result['message']);
-        }
-    }
-
-    /**
-     * Bulk update status menggunakan service
-     */
-    public function bulkUpdateStatus(Request $request)
-    {
-        $validated = $request->validate([
-            'post_ids' => 'required|array|min:1',
-            'post_ids.*' => 'exists:posts,id',
-            'status' => 'required|in:draft,published,archived'
-        ]);
-
-        $result = $this->postService->bulkUpdateStatus(
-            $validated['post_ids'], 
-            $validated['status']
-        );
-
-        return response()->json($result);
-    }
-}
+    <div class="flex justify-between pt-2">
+      <a href="{{ route('tags.index') }}" class="btn-secondary">Cancel</a>
+      <button class="btn-primary">Save</button>
+    </div>
+  </form>
+</div>
+@endsection
 ```
 
-### 🧪 TESTING & VERIFIKASI
+#### 21. Buat file resources/views/tags/edit.blade.php
 
-#### Test 1: Enhanced Update Operations Verification
-```bash
-echo "=== Enhanced Update Operations Testing ==="
+```php
+@extends('layouts.dashboard')
 
-# Test update dengan file replacement
-php artisan tinker --execute="
-\$post = \App\Models\Post::first();
-if (\$post) {
-    \$originalTitle = \$post->title;
-    \$post->update(['title' => 'Updated Title Test']);
-    echo 'Title update: ' . (\$post->title === 'Updated Title Test' ? 'OK' : 'Failed') . PHP_EOL;
-    
-    // Test slug generation
-    echo 'Slug updated: ' . (\$post->slug !== \Str::slug(\$originalTitle) ? 'OK' : 'Failed') . PHP_EOL;
-    
-    // Restore original title
-    \$post->update(['title' => \$originalTitle]);
-    echo 'Title restored: OK' . PHP_EOL;
-} else {
-    echo 'No posts found for testing' . PHP_EOL;
-}
-"
+@section('title','Edit Tag')
+@section('page-title','Edit Tag')
+
+@section('content')
+<div class="max-w-xl">
+  <form action="{{ route('tags.update', $tag) }}" method="POST" class="card space-y-4">
+    @csrf @method('PUT')
+    <div>
+      <label class="block text-sm font-medium mb-1">Name *</label>
+      <input name="name" value="{{ old('name',$tag->name) }}" class="input-field w-full" required>
+      @error('name') <p class="text-sm text-red-600">{{ $message }}</p> @enderror
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Slug</label>
+      <input name="slug" value="{{ old('slug',$tag->slug) }}" class="input-field w-full" placeholder="(auto if empty)">
+      @error('slug') <p class="text-sm text-red-600">{{ $message }}</p> @enderror
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Description</label>
+      <textarea name="description" rows="3" class="input-field w-full">{{ old('description',$tag->description) }}</textarea>
+      @error('description') <p class="text-sm text-red-600">{{ $message }}</p> @enderror
+    </div>
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">Color (#HEX)</label>
+        <input name="color" value="{{ old('color',$tag->color) }}" class="input-field w-full" maxlength="7">
+        @error('color') <p class="text-sm text-red-600">{{ $message }}</p> @enderror
+      </div>
+      <div class="flex items-end">
+        <label class="inline-flex items-center">
+          <input type="checkbox" name="is_active" value="1" class="mr-2" {{ old('is_active',$tag->is_active) ? 'checked' : '' }}>
+          Active
+        </label>
+      </div>
+    </div>
+
+    <div class="flex justify-between pt-2">
+      <a href="{{ route('tags.index') }}" class="btn-secondary">Back</a>
+      <button class="btn-primary">Update</button>
+    </div>
+  </form>
+</div>
+@endsection
 ```
 
-#### Test 2: Delete Operations dengan Cascade Testing
-```bash
-echo "=== Delete Operations Testing ==="
+#### 22. Update welcome.blade.php
 
-php artisan tinker --execute="
-// Create test post dengan relationships
-\$user = \App\Models\User::first();
-\$category = \App\Models\Category::first();
+```php
+<!DOCTYPE html>
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Welcome - CC ITK</title>
+    @vite(['resources/css/app.css','resources/js/app.js'])
+</head>
+<body class="antialiased bg-gray-50 text-gray-900">
 
-if (\$user && \$category) {
-    \$testPost = \App\Models\Post::create([
-        'title' => 'Test Delete Post',
-        'content' => 'This is a test post for deletion testing',
-        'slug' => 'test-delete-post-' . time(),
-        'status' => 'draft',
-        'user_id' => \$user->id,
-        'category_id' => \$category->id,
-    ]);
-    
-    // Add tags relationship
-    \$tags = \App\Models\Tag::take(2)->pluck('id');
-    if (\$tags->isNotEmpty()) {
-        \$testPost->tags()->attach(\$tags);
-        echo 'Tags attached: ' . \$testPost->tags()->count() . PHP_EOL;
-    }
-    
-    // Test delete operation
-    \$postId = \$testPost->id;
-    \$testPost->delete();
-    
-    // Verify soft delete
-    \$deletedPost = \App\Models\Post::withTrashed()->find(\$postId);
-    echo 'Soft delete working: ' . (\$deletedPost && \$deletedPost->trashed() ? 'OK' : 'Failed') . PHP_EOL;
-    
-    // Verify tags detached
-    echo 'Tags detached: ' . (\$deletedPost->tags()->count() === 0 ? 'OK' : 'Failed') . PHP_EOL;
-    
-    // Cleanup
-    \$deletedPost->forceDelete();
-    echo 'Test cleanup: OK' . PHP_EOL;
-} else {
-    echo 'Missing test data (user or category)' . PHP_EOL;
-}
-"
-```
+    <div class="min-h-screen flex flex-col justify-center items-center px-6">
+        <!-- Logo / Title -->
+        <div class="text-center mb-12">
+            <h1 class="text-5xl font-extrabold text-gradient mb-4">
+                Praktikum Cloud Computing
+            </h1>
+            <p class="text-lg text-gray-600 max-w-xl mx-auto">
+                🚀 Selamat datang! Pilih menu di bawah untuk masuk ke aplikasi Blog (publik)
+                atau Dashboard (kelola konten).
+            </p>
+        </div>
 
-#### Test 3: Bulk Operations Testing
-```bash
-echo "=== Bulk Operations Testing ==="
+        <!-- Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl w-full">
+            
+            <!-- Blog Card -->
+            <a href="{{ route('blog.index') }}"
+               class="group bg-white border border-gray-200 rounded-2xl p-8 shadow-sm hover:shadow-lg transition flex flex-col items-start">
+                <div class="flex items-center justify-center w-12 h-12 rounded-lg bg-primary-100 mb-4">
+                    <svg class="w-6 h-6 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h7l2 2h5a2 2 0 012 2v10a2 2 0 01-2 2z"/>
+                    </svg>
+                </div>
+                <h2 class="text-2xl font-semibold text-gray-900 mb-2 group-hover:text-primary-600 transition">
+                    View Blog
+                </h2>
+                <p class="text-gray-600 mb-4 flex-1">
+                    Lihat semua postingan publik, baca artikel, dan telusuri berdasarkan kategori atau tag.
+                </p>
+                <span class="mt-auto text-primary-600 font-medium">Masuk →</span>
+            </a>
 
-# Test bulk routes registration
-php artisan route:list | grep -E "(bulk|restore)" && echo "✓ Bulk routes registered"
+            <!-- Dashboard Card -->
+            <a href="{{ route('posts.index') }}"
+               class="group bg-white border border-gray-200 rounded-2xl p-8 shadow-sm hover:shadow-lg transition flex flex-col items-start">
+                <div class="flex items-center justify-center w-12 h-12 rounded-lg bg-gray-800 mb-4">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M9 17v-2h6v2a2 2 0 002 2h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V5a2 2 0 00-2-2H9a2 2 0 00-2 2v2H6a2 2 0 00-2 2v8a2 2 0 002 2h1a2 2 0 002-2z"/>
+                    </svg>
+                </div>
+                <h2 class="text-2xl font-semibold text-gray-900 mb-2 group-hover:text-gray-800 transition">
+                    Manage Posts
+                </h2>
+                <p class="text-gray-600 mb-4 flex-1">
+                    Kelola konten blog melalui dashboard admin: tambah, edit, hapus, dan atur kategori & tag.
+                </p>
+                <span class="mt-auto text-gray-800 font-medium">Masuk →</span>
+            </a>
 
-# Test bulk update functionality
-php artisan tinker --execute="
-// Create multiple test posts
-\$user = \App\Models\User::first();
-\$category = \App\Models\Category::first();
+        </div>
 
-if (\$user && \$category) {
-    \$testPosts = [];
-    for (\$i = 1; \$i <= 3; \$i++) {
-        \$testPosts[] = \App\Models\Post::create([
-            'title' => 'Bulk Test Post ' . \$i,
-            'content' => 'Content for bulk test post ' . \$i,
-            'slug' => 'bulk-test-post-' . \$i . '-' . time(),
-            'status' => 'draft',
-            'user_id' => \$user->id,
-            'category_id' => \$category->id,
-        ]);
-    }
-    
-    \$postIds = array_map(fn(\$post) => \$post->id, \$testPosts);
-    
-    // Test bulk status update
-    \$updated = \App\Models\Post::whereIn('id', \$postIds)
-                                ->update(['status' => 'published']);
-    
-    echo 'Bulk update count: ' . \$updated . PHP_EOL;
-    
-    // Verify update
-    \$publishedCount = \App\Models\Post::whereIn('id', \$postIds)
-                                      ->where('status', 'published')
-                                      ->count();
-    
-    echo 'Bulk update verification: ' . (\$publishedCount === 3 ? 'OK' : 'Failed') . PHP_EOL;
-    
-    // Cleanup
-    \App\Models\Post::whereIn('id', \$postIds)->forceDelete();
-    echo 'Bulk test cleanup: OK' . PHP_EOL;
-} else {
-    echo 'Missing test data for bulk operations' . PHP_EOL;
-}
-"
-```
-
-#### Test 4: Transaction Handling Testing
-```bash
-echo "=== Transaction Handling Testing ==="
-
-php artisan tinker --execute="
-// Test transaction rollback pada error
-try {
-    \DB::beginTransaction();
-    
-    // Create valid post
-    \$post = \App\Models\Post::create([
-        'title' => 'Transaction Test Post',
-        'content' => 'Testing transaction handling',
-        'slug' => 'transaction-test-' . time(),
-        'status' => 'draft',
-        'user_id' => 1,
-        'category_id' => 1,
-    ]);
-    
-    echo 'Post created with ID: ' . \$post->id . PHP_EOL;
-    
-    // Simulate error (invalid foreign key)
-    \App\Models\Post::create([
-        'title' => 'Invalid Post',
-        'content' => 'This should fail',
-        'slug' => 'invalid-post',
-        'status' => 'draft',
-        'user_id' => 99999, // Non-existent user
-        'category_id' => 99999, // Non-existent category
-    ]);
-    
-    \DB::commit();
-    echo 'Transaction committed (unexpected)' . PHP_EOL;
-    
-} catch (\Exception \$e) {
-    \DB::rollback();
-    echo 'Transaction rolled back: OK' . PHP_EOL;
-    
-    // Verify first post was also rolled back
-    \$postExists = \App\Models\Post::where('title', 'Transaction Test Post')->exists();
-    echo 'Rollback verification: ' . (!\$postExists ? 'OK' : 'Failed') . PHP_EOL;
-}
-"
-```
-
-#### Test 5: Service Class Integration Testing
-```bash
-echo "=== Service Class Integration Testing ==="
-
-# Test service class exists and methods are available
-php artisan tinker --execute="
-if (class_exists('\App\Services\PostService')) {
-    echo '✓ PostService class exists' . PHP_EOL;
-    
-    \$service = new \App\Services\PostService();
-    \$methods = get_class_methods(\$service);
-    \$requiredMethods = ['createPost', 'updatePost', 'deletePost', 'bulkUpdateStatus'];
-    
-    \$missingMethods = array_diff(\$requiredMethods, \$methods);
-    if (empty(\$missingMethods)) {
-        echo '✓ All required service methods exist' . PHP_EOL;
-    } else {
-        echo '✗ Missing service methods: ' . implode(', ', \$missingMethods) . PHP_EOL;
-    }
-} else {
-    echo '✗ PostService class not found' . PHP_EOL;
-}
-"
-
-# Test service injection dalam controller
-php artisan tinker --execute="
-try {
-    \$controller = app(\App\Http\Controllers\PostController::class);
-    echo '✓ PostController dependency injection working' . PHP_EOL;
-} catch (\Exception \$e) {
-    echo '✗ Controller dependency injection failed: ' . \$e->getMessage() . PHP_EOL;
-}
-"
-```
-
-### 🆘 TROUBLESHOOTING
-
-#### Problem 1: Transaction Deadlock Issues
-**Gejala:** `Deadlock found when trying to get lock` error during bulk operations
-**Solusi:**
-```bash
-# Check MySQL deadlock status
-mysql -u laravel_user -p laravel_app -e "SHOW ENGINE INNODB STATUS\G" | grep -A 20 "LATEST DETECTED DEADLOCK"
-
-# Optimize transaction timeout
-nano config/database.php
-# Add to mysql connection config:
-# 'options' => [
-#     PDO::ATTR_TIMEOUT => 30,
-#     PDO::MYSQL_ATTR_USE_BUFFERED_QUERY => false,
-# ]
-
-# Reduce transaction scope
-php artisan tinker --execute="
-// Process bulk operations in smaller batches
-\$postIds = [1, 2, 3, 4, 5];
-\$chunks = array_chunk(\$postIds, 2); // Process 2 at a time
-
-foreach (\$chunks as \$chunk) {
-    \DB::transaction(function () use (\$chunk) {
-        \App\Models\Post::whereIn('id', \$chunk)->update(['status' => 'published']);
-    });
-}
-echo 'Chunked bulk operation completed' . PHP_EOL;
-"
-```
-
-#### Problem 2: File Upload Cleanup Failures
-**Gejala:** Old images tidak terhapus saat update atau delete
-**Solusi:**
-```bash
-# Check storage permissions
-ls -la storage/app/public/posts/
-chmod -R 775 storage/app/public/
-
-# Test file operations
-php artisan tinker --execute="
-// Test file existence check
-\$testFile = 'posts/featured-images/test.jpg';
-echo 'Storage disk: ' . config('filesystems.default') . PHP_EOL;
-echo 'File exists method available: ' . (method_exists(\Storage::disk('public'), 'exists') ? 'Yes' : 'No') . PHP_EOL;
-
-// Test file deletion
-try {
-    \Storage::disk('public')->put('test-delete.txt', 'test content');
-    echo 'Test file created: OK' . PHP_EOL;
-    
-    \Storage::disk('public')->delete('test-delete.txt');
-    echo 'Test file deleted: OK' . PHP_EOL;
-} catch (\Exception \$e) {
-    echo 'File operation failed: ' . \$e->getMessage() . PHP_EOL;
-}
-"
-
-# Create file cleanup command
-php artisan make:command CleanupOrphanedFiles
-# Implement logic untuk menghapus files yang tidak terpakai
-```
-
-#### Problem 3: Bulk Operation Memory Issues
-**Gejala:** `Fatal error: Allowed memory size exhausted` saat bulk operations
-**Solusi:**
-```bash
-# Increase PHP memory limit
-php -d memory_limit=512M artisan tinker
-
-# Implement chunked processing
-php artisan tinker --execute="
-// Use chunk() method untuk large datasets
-\App\Models\Post::where('status', 'draft')
-                ->chunk(100, function (\$posts) {
-                    foreach (\$posts as \$post) {
-                        // Process individual post
-                        \$post->update(['status' => 'published']);
-                    }
-                    echo 'Processed chunk of ' . \$posts->count() . ' posts' . PHP_EOL;
-                });
-"
-
-# Update bulk operations untuk use chunking
-nano app/Services/PostService.php
-# Modify bulkUpdateStatus untuk process in chunks
-```
-
-#### Problem 4: Relationship Sync Errors
-**Gejala:** Tags atau relationships tidak ter-update dengan benar
-**Solusi:**
-```bash
-# Check pivot table structure
-mysql -u laravel_user -p laravel_app -e "DESCRIBE post_tags;"
-
-# Test relationship methods
-php artisan tinker --execute="
-\$post = \App\Models\Post::first();
-if (\$post) {
-    echo 'Post ID: ' . \$post->id . PHP_EOL;
-    echo 'Current tags: ' . \$post->tags()->count() . PHP_EOL;
-    
-    // Test sync method
-    \$tagIds = [1, 2, 3];
-    \$post->tags()->sync(\$tagIds);
-    echo 'After sync: ' . \$post->tags()->count() . PHP_EOL;
-    
-    // Test detach
-    \$post->tags()->detach();
-    echo 'After detach: ' . \$post->tags()->count() . PHP_EOL;
-} else {
-    echo 'No posts found for relationship testing' . PHP_EOL;
-}
-"
-
-# Check for duplicate entries in pivot table
-mysql -u laravel_user -p laravel_app -e "
-SELECT post_id, tag_id, COUNT(*) as count 
-FROM post_tags 
-GROUP BY post_id, tag_id 
-HAVING count > 1;"
-```
-
-#### Problem 5: Validation Errors pada Conditional Rules
-**Gejala:** Form validation fails untuk conditional fields
-**Solusi:**
-```bash
-# Test validation rules
-php artisan tinker --execute="
-\$request = new \Illuminate\Http\Request();
-\$request->merge([
-    'title' => 'Test Title',
-    'content' => 'Test content with enough characters',
-    'status' => 'published',
-    'category_id' => 1,
-    'user_id' => 1,
-    'schedule_publish' => true,
-    'published_at' => '2025-12-25 10:00:00'
-]);
-
-\$validator = \Validator::make(\$request->all(), [
-    'title' => 'required|string|max:255',
-    'content' => 'required|string|min:10',
-    'status' => 'required|in:draft,published,archived',
-    'category_id' => 'required|exists:categories,id',
-    'user_id' => 'required|exists:users,id',
-    'published_at' => 'nullable|date',
-    'schedule_publish' => 'boolean',
-]);
-
-if (\$validator->passes()) {
-    echo '✓ Validation passed' . PHP_EOL;
-} else {
-    echo '✗ Validation failed:' . PHP_EOL;
-    foreach (\$validator->errors()->all() as \$error) {
-        echo '  - ' . \$error . PHP_EOL;
-    }
-}
-"
-
-# Add custom validation rule untuk conditional fields
-php artisan make:rule ConditionalPublishDate
-```
-
-#### Problem 6: JavaScript Bulk Operations Not Working
-**Gejala:** Bulk selection atau AJAX calls tidak berfungsi
-**Solusi:**
-```bash
-# Check CSRF token availability
-php artisan tinker --execute="
-echo 'CSRF token generation: ' . csrf_token() . PHP_EOL;
-echo 'Session driver: ' . config('session.driver') . PHP_EOL;
-"
-
-# Test AJAX endpoint manually
-curl -X POST http://localhost:8000/posts/bulk-update-status \
-     -H "Content-Type: application/json" \
-     -H "Accept: application/json" \
-     -d '{"post_ids":[1,2],"status":"published"}' | jq .
-
-# Check browser console for JavaScript errors
-# Add debugging to JavaScript functions
-echo 'Add console.log statements to bulk operations JavaScript'
-
-# Verify route definitions
-php artisan route:list | grep bulk
+        <!-- Footer -->
+        <footer class="mt-16 text-sm text-gray-500">
+            © {{ date('Y') }} Praktikum Cloud Computing — Institut Teknologi Kalimantan
+        </footer>
+    </div>
+</body>
+</html>
 ```
 
 ### 📋 DELIVERABLES
 
 **Checklist yang harus diserahkan pada akhir sesi:**
 
-#### ✅ Enhanced Update Operations
-- [ ] Screenshot edit form dengan advanced features (image replacement, scheduling)
-- [ ] Video/screenshot testing file upload replacement functionality
-- [ ] Screenshot real-time form features (slug preview, character counter)
-- [ ] Testing update operations dengan berbagai skenario (title change, status change, file operations)
+#### ✅ View
+1. View Landing Page ![alt text](Images/5-1.png)
+2. View Blog
+3. View Tags
 
-#### ✅ Advanced Delete Operations
-- [ ] Screenshot delete operations dengan cascade cleanup verification
-- [ ] Database screenshots showing proper relationship cleanup
-- [ ] Log files showing audit trail untuk delete operations
-- [ ] Testing soft delete dan restore functionality
-
-#### ✅ Bulk Operations Implementation
-- [ ] Screenshot bulk selection UI dalam posts index
-- [ ] Video demonstration bulk delete dan bulk status update
-- [ ] API testing screenshots untuk bulk endpoints
-- [ ] Performance testing results untuk bulk operations
-
-#### ✅ Transaction Handling
-- [ ] PostService class implementation dengan comprehensive error handling
-- [ ] Transaction testing screenshots showing rollback functionality
-- [ ] Error logging verification dan audit trail examples
-- [ ] Service integration testing results
-
-#### ✅ Advanced UI Features
-- [ ] Enhanced forms dengan JavaScript functionality working
-- [ ] Real-time validation dan feedback systems
-- [ ] AJAX operations working tanpa page refresh
-- [ ] Responsive design testing pada berbagai screen sizes
-
-#### ✅ Code Quality dan Architecture
-- [ ] Service class following SOLID principles
-- [ ] Proper error handling dan logging implementation
-- [ ] Comprehensive validation rules dan security measures
-- [ ] Code documentation dan inline comments
+#### ✅ Operation
+1. Before dan After EDIT posts
+2. Add dan Delete Posts
+3. Add dan Delete Tags
 
 **Format Submission:**
-```bash
-cd ~/praktikum-cc
-mkdir -p submission/week5/{controllers,services,views,js,tests,logs}
-
-# Copy enhanced files
-cp app/Http/Controllers/PostController.php submission/week5/controllers/
-cp app/Services/PostService.php submission/week5/services/
-cp resources/views/posts/edit.blade.php submission/week5/views/
-cp resources/views/posts/index.blade.php submission/week5/views/
-
-# Copy route files
-cp routes/web.php submission/week5/routes-web.php
-cp routes/api.php submission/week5/routes-api.php
-
-# Export recent logs for audit trail
-tail -50 storage/logs/laravel.log > submission/week5/logs/recent-operations.log
-
-**Format Submission:**
-1. Buat folder submission/week5/
+1. Buat folder submission/week/
 2. Masukkan semua screenshot dengan nama yang jelas
 3. Buat file laporan dalam format Markdown
 4. Commit dan push ke repository
