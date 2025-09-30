@@ -162,7 +162,48 @@ API_PREFIX=api
 API_DEBUG=true
 ```
 
-##### Step 1.4: Run Sanctum Migrations
+##### Step 1.4: Create file migrations `2025_09_29_000001_create_personal_access_tokens_table.php`
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('personal_access_tokens', function (Blueprint $table) {
+            $table->bigIncrements('id');
+            $table->string('tokenable_type');
+            $table->unsignedBigInteger('tokenable_id');
+            $table->string('name');
+            $table->string('token', 64)->unique();
+            $table->text('abilities')->nullable();
+            $table->timestamp('last_used_at')->nullable();
+            $table->timestamp('expires_at')->nullable();
+            $table->timestamps();
+
+            $table->index(['tokenable_type', 'tokenable_id'], 'personal_access_tokens_tokenable_type_tokenable_id_index');
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('personal_access_tokens');
+    }
+};
+```
+
+##### Step 1.5: Run Sanctum Migrations
 ```bash
 # Run migration untuk personal access tokens table
 php artisan migrate
@@ -173,7 +214,7 @@ php artisan migrate
 mysql -u laravel_user -p laravel_app -e "DESCRIBE personal_access_tokens;"
 ```
 
-##### Step 1.5: Configure User Model untuk Sanctum
+##### Step 1.6: Configure User Model untuk Sanctum
 
 **Update User model dengan Sanctum integration `app/Models/User.php`:**
 ```php
@@ -327,7 +368,7 @@ class User extends Authenticatable
 }
 ```
 
-##### Step 1.6: Define API Rate Limiter (throttle:api)
+##### Step 1.7: Define API Rate Limiter (throttle:api)
 
 **Tambahkan konfigurasi rate limiter `api` di `app/Providers/AppServiceProvider.php`:**
 ```php
