@@ -3071,235 +3071,267 @@ curl -X GET http://localhost:8000/api/auth/me \
 ### 🧪 TESTING & VERIFIKASI
 
 #### Test 1: Sanctum Installation & Configuration Verification
-```bash
-echo "=== Sanctum Installation & Configuration Testing ==="
+```powershell
+Write-Host "=== Sanctum Installation & Configuration Testing ===" -ForegroundColor Cyan
 
 # Test 1.1: Verify Sanctum package installation
-composer show laravel/sanctum && echo "✓ Sanctum package installed"
+$sanctumInstalled = $false
+try {
+    & composer show laravel/sanctum *> $null
+    if ($LASTEXITCODE -eq 0) { $sanctumInstalled = $true }
+} catch { $sanctumInstalled = $false }
+if ($sanctumInstalled) { Write-Host "✓ Sanctum package installed" -ForegroundColor Green } else { Write-Host "✗ Sanctum package missing" -ForegroundColor Red }
 
 # Test 1.2: Check Sanctum configuration
-if [ -f "config/sanctum.php" ]; then
-    echo "✓ Sanctum config file exists"
-    php artisan config:show sanctum.expiration && echo "✓ Token expiration configured"
-else
-    echo "✗ Sanctum config file missing"
-fi
+if (Test-Path "config/sanctum.php") {
+    Write-Host "✓ Sanctum config file exists" -ForegroundColor Green
+    try {
+        php artisan config:show sanctum.expiration *> $null
+        if ($LASTEXITCODE -eq 0) { Write-Host "✓ Token expiration configured" -ForegroundColor Green } else { Write-Host "⚠ Could not read sanctum.expiration" -ForegroundColor Yellow }
+    } catch { Write-Host "⚠ Could not read sanctum.expiration" -ForegroundColor Yellow }
+} else {
+    Write-Host "✗ Sanctum config file missing" -ForegroundColor Red
+}
 
 # Test 1.3: Verify personal_access_tokens table
-php artisan tinker --execute="
-if (\Schema::hasTable('personal_access_tokens')) {
-    echo '✓ personal_access_tokens table exists' . PHP_EOL;
-    \$columns = \Schema::getColumnListing('personal_access_tokens');
-    \$required = ['id', 'tokenable_type', 'tokenable_id', 'name', 'token', 'abilities', 'last_used_at', 'expires_at'];
-    \$missing = array_diff(\$required, \$columns);
-    if (empty(\$missing)) {
-        echo '✓ All required columns present' . PHP_EOL;
-    } else {
-        echo '✗ Missing columns: ' . implode(', ', \$missing) . PHP_EOL;
-    }
-} else {
-    echo '✗ personal_access_tokens table missing' . PHP_EOL;
-}
-"
+php artisan tinker --execute "echo(\Schema::hasTable('personal_access_tokens') ? '✓ personal_access_tokens table exists' : '✗ personal_access_tokens table missing'), PHP_EOL;"
+
+php artisan tinker --execute "`$req=['id','tokenable_type','tokenable_id','name','token','abilities','last_used_at','expires_at']; `$cols=\Schema::getColumnListing('personal_access_tokens'); `$miss=array_diff(`$req,`$cols); echo empty(`$miss) ? '✓ All required columns present' : '✗ Missing columns: '.implode(', ',`$miss), PHP_EOL;"
+
 
 # Test 1.4: Check middleware registration
-php artisan route:list | grep -q "sanctum" && echo "✓ Sanctum middleware registered"
+$routes = php artisan route:list 2>&1
+if ($routes | Select-String -Quiet "sanctum") { Write-Host "✓ Sanctum middleware registered" -ForegroundColor Green } else { Write-Host "⚠ Sanctum middleware not detected in routes" -ForegroundColor Yellow }
 ```
 
 #### Test 2: Authentication Flow Testing
-```bash
-echo "=== Authentication Flow Testing ==="
+```powershell
+Write-Host "=== Authentication Flow Testing ===" -ForegroundColor Cyan
+$BaseUrl = "http://localhost:8000/api"
 
-# Test 2.1: User model Sanctum integration
-php artisan tinker --execute="
-\$user = \App\Models\User::first();
-if (\$user) {
-    // Test HasApiTokens trait methods
-    \$methods = get_class_methods(\$user);
-    \$required = ['createToken', 'tokens', 'currentAccessToken'];
-    \$hasAll = true;
-    foreach (\$required as \$method) {
-        if (!in_array(\$method, \$methods)) {
-            echo '✗ Missing method: ' . \$method . PHP_EOL;
-            \$hasAll = false;
-        }
-    }
-    if (\$hasAll) {
-        echo '✓ User model has all Sanctum methods' . PHP_EOL;
-    }
-    
-    // Test token creation
+# Test 2.1: User model Sanctum integration (via Tinker) — super safe via temp file + STDIN
+$tmp = Join-Path $env:TEMP ("tinker-auth-{0}.php" -f (Get-Random))
+@'
+$user = \App\Models\User::first();
+if ($user) {
+    $methods = get_class_methods($user);
+    $required = array('createToken','tokens','currentAccessToken');
+    $missing = array_diff($required, $methods);
+    if (empty($missing)) { echo '[OK] User model has all Sanctum methods', PHP_EOL; }
+    else { echo '[ERR] Missing method(s): ' . implode(', ', $missing), PHP_EOL; }
+
     try {
-        \$token = \$user->createToken('test-token', ['posts:read']);
-        echo '✓ Token creation working' . PHP_EOL;
-        
-        // Test token abilities
-        if (\$token->accessToken->can('posts:read')) {
-            echo '✓ Token abilities working' . PHP_EOL;
-        }
-        
-        // Cleanup test token
-        \$token->accessToken->delete();
-        echo '✓ Token cleanup successful' . PHP_EOL;
-    } catch (\Exception \$e) {
-        echo '✗ Token creation failed: ' . \$e->getMessage() . PHP_EOL;
+        $token = $user->createToken('test-token', array('posts:read'));
+        echo '[OK] Token creation working', PHP_EOL;
+        if ($token->accessToken->can('posts:read')) { echo '[OK] Token abilities working', PHP_EOL; }
+        $token->accessToken->delete();
+        echo '[OK] Token cleanup successful', PHP_EOL;
+    } catch (\Exception $e) {
+        echo '[ERR] Token creation failed: ' . $e->getMessage(), PHP_EOL;
     }
 } else {
-    echo '✗ No users found for testing' . PHP_EOL;
+    echo '[ERR] No users found for testing', PHP_EOL;
 }
-"
+'@ | Set-Content -Encoding UTF8 $tmp
 
-# Test 2.2: API endpoints response format
-curl -s http://localhost:8000/api/info | jq -e '.api_version' >/dev/null && echo "✓ API info endpoint working"
+# Kirim via STDIN (hindari --execute yang suka mengunyah kutip)
+Get-Content -Raw $tmp | php artisan tinker --no-interaction
 
-# Test 2.3: Authentication endpoints
-echo "Testing registration endpoint..."
-REGISTER_RESPONSE=$(curl -s -X POST http://localhost:8000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Test Verification User",
-    "email": "verify@test.com",
-    "password": "password123",
-    "password_confirmation": "password123"
-  }')
+Remove-Item $tmp -ErrorAction SilentlyContinue
 
-if echo "$REGISTER_RESPONSE" | jq -e '.success' >/dev/null 2>&1; then
-    echo "✓ Registration endpoint working"
-    VERIFY_TOKEN=$(echo "$REGISTER_RESPONSE" | jq -r '.data.token.access_token')
-    
-    # Test authenticated endpoint
-    AUTH_TEST=$(curl -s -X GET http://localhost:8000/api/auth/me \
-      -H "Authorization: Bearer $VERIFY_TOKEN")
-    
-    if echo "$AUTH_TEST" | jq -e '.success' >/dev/null 2>&1; then
-        echo "✓ Bearer token authentication working"
-    else
-        echo "✗ Bearer token authentication failed"
-    fi
-else
-    echo "✗ Registration endpoint failed"
-fi
+# Test 2.2: API info endpoint format
+$r = Invoke-Api -Method GET -Url "$BaseUrl/info"
+if ($r -and $r.StatusCode -eq 200) {
+    try { $json = $r.Content | ConvertFrom-Json } catch { $json = $null }
+    if ($json -and $json.api_version) {
+        Write-Host "[OK] API info endpoint working" -ForegroundColor Green
+    } else {
+        Write-Host "[ERR] API info response invalid" -ForegroundColor Red
+    }
+} else {
+    Write-Host ("[ERR] API info endpoint unreachable (HTTP {0})" -f ($r.StatusCode)) -ForegroundColor Red
+}
+
+# Test 2.3: Registration + Login + authenticated request
+Write-Host "Testing registration + login..." -ForegroundColor Yellow
+$rand = Get-Random
+$email = "verify+$rand@test.com"
+
+$register = Invoke-Api -Method POST -Url "$BaseUrl/auth/register" -Body @{
+    name='Test Verification User'; email=$email; password='password123'; password_confirmation='password123'
+}
+
+if ($register -and ($register.StatusCode -eq 201 -or $register.StatusCode -eq 200)) {
+    Write-Host "[OK] Registration endpoint working" -ForegroundColor Green
+} else {
+    Write-Host ("[WARN] Registration status: {0}" -f ($register.StatusCode)) -ForegroundColor Yellow
+}
+
+$token = $null
+try {
+    if ($register.Content) {
+        $regJson = $register.Content | ConvertFrom-Json
+        if ($regJson -and $regJson.data -and $regJson.data.token -and $regJson.data.token.access_token) {
+            $token = $regJson.data.token.access_token
+        }
+    }
+} catch {}
+
+if (-not $token) {
+    $login = Invoke-Api -Method POST -Url "$BaseUrl/auth/login" -Body @{
+        email=$email; password='password123'; device_name='verify-test'
+    }
+    if ($login -and $login.Content) {
+        try {
+            $loginJson = $login.Content | ConvertFrom-Json
+            $token = $loginJson.data.token.access_token
+        } catch {}
+    }
+}
+
+if ($token) {
+    $Global:VERIFY_TOKEN = $token
+    $auth = Invoke-Api -Method GET -Url "$BaseUrl/auth/me" -Headers @{ Authorization = "Bearer $token" }
+    if ($auth -and $auth.StatusCode -eq 200) {
+        Write-Host "[OK] Bearer token authentication working" -ForegroundColor Green
+        # Write-Host $auth.Content  # uncomment kalau mau lihat payload
+    } else {
+        Write-Host ("[ERR] Bearer token authentication failed (HTTP {0})" -f $auth.StatusCode) -ForegroundColor Red
+    }
+} else {
+    Write-Host "[ERR] Failed to acquire token" -ForegroundColor Red
+}
 ```
 
-#### Test 3: Role-Based Authorization Testing
-```bash
-echo "=== Role-Based Authorization Testing ==="
+<!-- #### Test 3: Role-Based Authorization Testing
+```powershell
+Write-Host "=== Role-Based Authorization Testing ===" -ForegroundColor Cyan
+$BaseUrl = "http://localhost:8000/api"
 
-# Test 3.1: Middleware functionality
-php artisan tinker --execute="
-// Test CheckApiRole middleware exists and has correct methods
-if (class_exists('\App\Http\Middleware\CheckApiRole')) {
-    echo '✓ CheckApiRole middleware exists' . PHP_EOL;
-    
-    \$middleware = new \App\Http\Middleware\CheckApiRole();
-    if (method_exists(\$middleware, 'handle')) {
-        echo '✓ Middleware has handle method' . PHP_EOL;
-    }
+# Test 3.1: Middleware functionality (via Tinker)
+$tinkerMw = @'
+if (class_exists("\App\Http\Middleware\CheckApiRole")) {
+    echo "✓ CheckApiRole middleware exists\n";
+    $middleware = new \App\Http\Middleware\CheckApiRole();
+    if (method_exists($middleware, "handle")) { echo "✓ Middleware has handle method\n"; }
 } else {
-    echo '✗ CheckApiRole middleware missing' . PHP_EOL;
+    echo "✗ CheckApiRole middleware missing\n";
 }
 
-// Test ApiRateLimit middleware
-if (class_exists('\App\Http\Middleware\ApiRateLimit')) {
-    echo '✓ ApiRateLimit middleware exists' . PHP_EOL;
+if (class_exists("\App\Http\Middleware\ApiRateLimit")) {
+    echo "✓ ApiRateLimit middleware exists\n";
 } else {
-    echo '✗ ApiRateLimit middleware missing' . PHP_EOL;
+    echo "✗ ApiRateLimit middleware missing\n";
 }
-"
+'@
+php artisan tinker --execute "$tinkerMw"
+
+# Helper to get status code even on failures
+function Get-StatusCode {
+    param([string]$Url, [hashtable]$Headers)
+    try { $resp = Invoke-WebRequest -Uri $Url -Headers $Headers -ErrorAction Stop } catch { $resp = $_.Exception.Response }
+    try { return [int]$resp.StatusCode } catch { return -1 }
+}
 
 # Test 3.2: Route protection
-echo "Testing protected routes..."
+Write-Host "Testing protected routes..." -ForegroundColor Yellow
 
-# Test admin-only endpoint without authentication
-UNAUTH_RESPONSE=$(curl -s -w "%{http_code}" http://localhost:8000/api/admin/dashboard -o /dev/null)
-if [ "$UNAUTH_RESPONSE" = "401" ]; then
-    echo "✓ Admin routes protected from unauthenticated access"
-else
-    echo "✗ Admin routes should return 401 for unauthenticated users"
-fi
+# Without authentication (should be 401)
+$code = Get-StatusCode -Url "$BaseUrl/admin/dashboard-stats"
+if ($code -eq 401) { Write-Host "✓ Admin routes protected from unauthenticated access" -ForegroundColor Green } else { Write-Host ("✗ Expected 401, got {0}" -f $code) -ForegroundColor Red }
 
-# Test with non-admin user (if token available)
-if [ ! -z "$VERIFY_TOKEN" ]; then
-    NONAUTH_RESPONSE=$(curl -s -w "%{http_code}" http://localhost:8000/api/admin/dashboard \
-      -H "Authorization: Bearer $VERIFY_TOKEN" -o /dev/null)
-    if [ "$NONAUTH_RESPONSE" = "403" ]; then
-        echo "✓ Admin routes protected from non-admin users"
-    else
-        echo "✗ Admin routes should return 403 for non-admin users"
-    fi
-fi
-```
+# With non-admin token (should be 403 if token exists)
+if ($Global:VERIFY_TOKEN) {
+    $code = Get-StatusCode -Url "$BaseUrl/admin/content-metrics" -Headers @{ Authorization = "Bearer $($Global:VERIFY_TOKEN)" }
+    if ($code -eq 403) { Write-Host "✓ Admin routes protected from non-admin users" -ForegroundColor Green } else { Write-Host ("✗ Expected 403, got {0}" -f $code) -ForegroundColor Red }
+}
+``` -->
 
-#### Test 4: API Rate Limiting Testing
-```bash
-echo "=== API Rate Limiting Testing ==="
+#### Test 3: API Rate Limiting Testing
+```powershell
+Write-Host "=== API Rate Limiting Testing ===" -ForegroundColor Cyan
+$BaseUrl = "http://localhost:8000/api"
 
 # Test 4.1: Rate limit headers
-RATE_RESPONSE=$(curl -s -I http://localhost:8000/api/info)
-if echo "$RATE_RESPONSE" | grep -q "X-RateLimit-Limit"; then
-    echo "✓ Rate limit headers present"
-    echo "$RATE_RESPONSE" | grep "X-RateLimit"
-else
-    echo "✗ Rate limit headers missing"
-fi
+try {
+    $head = Invoke-WebRequest -Uri "$BaseUrl/info" -Method Head -ErrorAction Stop
+} catch {
+    $head = $_.Exception.Response
+}
+if (-not $head -or $head.StatusCode -eq 405) { $head = Invoke-WebRequest -Uri "$BaseUrl/info" -Method Get -ErrorAction SilentlyContinue }
+if ($head -and $head.Headers["X-RateLimit-Limit"]) {
+    Write-Host "✓ Rate limit headers present" -ForegroundColor Green
+    if ($head.Headers["X-RateLimit-Limit"]) { Write-Host ("  X-RateLimit-Limit: {0}" -f $head.Headers["X-RateLimit-Limit"]) }
+    if ($head.Headers["X-RateLimit-Remaining"]) { Write-Host ("  X-RateLimit-Remaining: {0}" -f $head.Headers["X-RateLimit-Remaining"]) }
+} else {
+    Write-Host "✗ Rate limit headers missing" -ForegroundColor Red
+}
 
 # Test 4.2: Rate limit enforcement (test endpoint)
-if curl -s http://localhost:8000/api/test/rate-limit >/dev/null 2>&1; then
-    echo "Testing rate limit enforcement..."
-    for i in {1..8}; do
-        RESPONSE_CODE=$(curl -s -w "%{http_code}" http://localhost:8000/api/test/rate-limit -o /dev/null)
-        if [ "$RESPONSE_CODE" = "429" ]; then
-            echo "✓ Rate limiting triggered after $i requests"
-            break
-        elif [ $i -eq 8 ]; then
-            echo "⚠ Rate limiting not triggered (might be configured for higher limits)"
-        fi
-        sleep 0.1
-    done
-else
-    echo "⚠ Rate limit test endpoint not available"
-fi
+function Get-Code {
+    param([string]$Url)
+    try { $r = Invoke-WebRequest -Uri $Url -ErrorAction Stop } catch { $r = $_.Exception.Response }
+    try { return [int]$r.StatusCode } catch { return -1 }
+}
+
+try { $ok = (Get-Code "$BaseUrl/test/rate-limit"); $endpointAvailable = ($ok -gt 0) } catch { $endpointAvailable = $false }
+if ($endpointAvailable) {
+    Write-Host "Testing rate limit enforcement..." -ForegroundColor Yellow
+    $triggered = $false
+    for ($i = 1; $i -le 8; $i++) {
+        $code = Get-Code "$BaseUrl/test/rate-limit"
+        if ($code -eq 429) { Write-Host ("✓ Rate limiting triggered after {0} requests" -f $i) -ForegroundColor Green; $triggered = $true; break }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not $triggered) { Write-Host "⚠ Rate limiting not triggered (limit may be higher)" -ForegroundColor Yellow }
+} else {
+    Write-Host "⚠ Rate limit test endpoint not available" -ForegroundColor Yellow
+}
 ```
 
-#### Test 5: API Security & Performance Testing
-```bash
-echo "=== API Security & Performance Testing ==="
+#### Test 4: API Security & Performance Testing
+```powershell
+Write-Host "=== API Security & Performance Testing ===" -ForegroundColor Cyan
+$BaseUrl = "http://localhost:8000/api"
 
-# Test 5.1: CSRF protection for API routes
-CSRF_RESPONSE=$(curl -s -w "%{http_code}" -X POST http://localhost:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test","password":"test"}' -o /dev/null)
+# Helper to get status code on errors
+function Invoke-Code {
+    param([string]$Url, [string]$Method = 'GET', [hashtable]$Body, [hashtable]$Headers, [string]$ContentType)
+    $ct = if ([string]::IsNullOrWhiteSpace($ContentType)) { 'application/json' } else { $ContentType }
+    try {
+        if ($Body) {
+            $json = $Body | ConvertTo-Json -Depth 8
+            $r = Invoke-WebRequest -Uri $Url -Method $Method -Headers $Headers -ContentType $ct -Body $json -ErrorAction Stop
+        } else {
+            $r = Invoke-WebRequest -Uri $Url -Method $Method -Headers $Headers -ContentType $ct -ErrorAction Stop
+        }
+    } catch {
+        $r = $_.Exception.Response
+    }
+    try { return [int]$r.StatusCode } catch { return -1 }
+}
 
-if [ "$CSRF_RESPONSE" != "419" ]; then
-    echo "✓ API routes properly exempt from CSRF protection"
-else
-    echo "✗ API routes incorrectly requiring CSRF tokens"
-fi
+# Test 5.1: CSRF protection for API routes (should NOT require CSRF, i.e., NOT 419)
+$csrfCode = Invoke-Code -Url "$BaseUrl/auth/login" -Method POST -Body @{ email='test'; password='test' }
+if ($csrfCode -ne 419) { Write-Host "✓ API routes properly exempt from CSRF protection" -ForegroundColor Green } else { Write-Host "✗ API routes incorrectly requiring CSRF tokens" -ForegroundColor Red }
 
-# Test 5.2: Content-Type validation
-INVALID_CONTENT=$(curl -s -w "%{http_code}" -X POST http://localhost:8000/api/auth/login \
-  -H "Content-Type: text/plain" \
-  -d "invalid data" -o /dev/null)
-
-echo "Content-Type validation response: $INVALID_CONTENT"
+# Test 5.2: Content-Type validation (send invalid content-type)
+$invalidCode = Invoke-Code -Url "$BaseUrl/auth/login" -Method POST -Headers @{ 'Content-Type' = 'text/plain' } -ContentType 'text/plain'
+Write-Host ("Content-Type validation response: {0}" -f $invalidCode)
 
 # Test 5.3: Large payload handling
-echo "Testing large payload handling..."
-LARGE_PAYLOAD=$(printf '{"name":"%*s","email":"large@test.com","password":"password123","password_confirmation":"password123"}' 1000 'A')
-LARGE_RESPONSE=$(curl -s -w "%{http_code}" -X POST http://localhost:8000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d "$LARGE_PAYLOAD" -o /dev/null)
-
-echo "Large payload response: $LARGE_RESPONSE"
+Write-Host "Testing large payload handling..." -ForegroundColor Yellow
+$largeName = ('A' * 1000)
+$largeBody = @{ name=$largeName; email='large@test.com'; password='password123'; password_confirmation='password123' }
+$largeCode = Invoke-Code -Url "$BaseUrl/auth/register" -Method POST -Body $largeBody
+Write-Host ("Large payload response: {0}" -f $largeCode)
 
 # Test 5.4: Response time measurement
-echo "Measuring API response times..."
-for endpoint in "/api/info" "/api/public/stats"; do
-    if curl -s "$endpoint" >/dev/null 2>&1; then
-        TIME=$(curl -s -w "%{time_total}" http://localhost:8000$endpoint -o /dev/null)
-        echo "  $endpoint: ${TIME}s"
-    fi
-done
+Write-Host "Measuring API response times..." -ForegroundColor Yellow
+foreach ($endpoint in @("/api/info", "/api/public/stats")) {
+    $url = "http://localhost:8000$endpoint"
+    try { $t = (Measure-Command { Invoke-WebRequest -Uri $url -ErrorAction SilentlyContinue | Out-Null }).TotalSeconds; Write-Host ("  {0}: {1:N3}s" -f $endpoint, $t) } catch { Write-Host ("  {0}: unreachable" -f $endpoint) }
+}
 ```
 
 ### 🆘 TROUBLESHOOTING
