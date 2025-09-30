@@ -1822,7 +1822,7 @@ AND TABLE_NAME IN ('users', 'personal_access_tokens');
 # Generate sample data untuk testing
 php artisan tinker --execute="
 // Create test users with different roles
-if (\App\Models\User::count() < 5) {
+if (\App\Models\User::count() < 20) {
     \App\Models\User::create([
         'name' => 'Admin User',
         'email' => 'admin@test.com',
