@@ -56,8 +56,8 @@ composer require laravel/sanctum:^4.0
 php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider" --tag=config
 
 # Verify published files
-ls -la config/sanctum.php
-ls -la database/migrations/ | grep sanctum
+ls config/sanctum.php
+ls database/migrations/ | grep sanctum
 ```
 
 ##### Step 1.2: Configure Sanctum Settings
@@ -389,8 +389,8 @@ php artisan make:middleware CheckApiRole
 php artisan make:middleware ApiRateLimit
 
 # Verify controllers created
-ls -la app/Http/Controllers/Api/
-ls -la app/Http/Middleware/
+ls app/Http/Controllers/Api/
+ls app/Http/Middleware/
 ```
 
 ##### Step 2.2: Implement AuthController dengan Comprehensive Features
