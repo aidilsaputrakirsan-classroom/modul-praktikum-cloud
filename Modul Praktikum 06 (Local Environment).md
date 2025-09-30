@@ -39,7 +39,7 @@ echo 'Existing API routes: ' . \Route::getRoutes()->count() . PHP_EOL;
 
 # Check Laravel version compatibility dengan Sanctum
 php artisan --version
-composer show laravel/sanctum 2>/dev/null || echo "Sanctum not installed yet"
+composer show laravel/sanctum
 ```
 
 ### 🛠️ LANGKAH PRAKTIKUM
