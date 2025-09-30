@@ -3570,7 +3570,7 @@ echo 'Expired tokens: ' . \$expired . PHP_EOL;
 
 **Checklist yang harus diserahkan pada akhir sesi:**
 
-#### ✅ Sanctum Installation & Configuration
+<!-- #### ✅ Sanctum Installation & Configuration
 - [ ] Screenshot output `composer show laravel/sanctum` (jalankan di root project; foto paket & versi)
 - [ ] Lampirkan file `config/sanctum.php` jika ada kustomisasi (cukup file, tidak perlu screenshot)
 - [ ] Screenshot `php artisan migrate:status` menampilkan migrasi `personal_access_tokens` = Yes
@@ -3612,7 +3612,35 @@ echo 'Expired tokens: ' . \$expired . PHP_EOL;
 - [ ] Token expiration handling bukti `SANCTUM_TOKEN_EXPIRATION` dan field `expires_at` pada `personal_access_tokens`
 - [ ] Bulk operations bukti hanya role yang berwenang (screenshot respons + potongan kode otorisasi)
 - [ ] Admin analytics endpoints — screenshot admin (200) vs user (403)
-  — contoh: `curl.exe -i http://localhost:8000/api/admin/dashboard-stats` atau `curl.exe -i http://localhost:8000/api/admin/content-metrics` (pastikan dilindungi `auth:sanctum` + `api.role:admin` jika diterapkan)
+  — contoh: `curl.exe -i http://localhost:8000/api/admin/dashboard-stats` atau `curl.exe -i http://localhost:8000/api/admin/content-metrics` (pastikan dilindungi `auth:sanctum` + `api.role:admin` jika diterapkan) -->
+
+#### ✅ Sanctum Installation & Configuration
+- [ ] Screenshot output `composer show laravel/sanctum` (paket & versi).  
+- [ ] Screenshot `php artisan migrate:status` menampilkan `personal_access_tokens = Yes`.  
+- [ ] Salin variabel `SANCTUM_*` dan `API_*` ke `submission/week6/env-sanitized.txt` (jangan unggah `.env` penuh).  
+- [ ] Lampirkan `app/Providers/AppServiceProvider.php` (definisi rate limiter `api`); opsional screenshot header `X-RateLimit-*` via `curl`.  
+
+#### ✅ Authentication System
+- [ ] Lampirkan `app/Http/Controllers/Api/AuthController.php` (register, login, logout, me).  
+- [ ] Lampirkan `app/Models/User.php` dengan trait `HasApiTokens`.  
+- [ ] Screenshot login menghasilkan token dan validasi `GET /api/auth/me` dengan Bearer token.  
+- [ ] Bukti uji endpoint auth (`register`, `login`, `me`, `logout`) via Postman/cURL.  
+
+#### ✅ Authorization & Role-Based Access Control
+- [ ] Lampirkan `app/Http/Middleware/CheckApiRole.php`.  
+- [ ] Lampirkan `routes/api.php` (route groups + middleware).  
+- [ ] Screenshot akses endpoint admin/editor-only dengan user biasa (403) dan dengan role yang benar (200).  
+
+#### ✅ CRUD API Sederhana
+- [ ] Lampirkan `app/Http/Controllers/Api/PostApiController.php` (CRUD + ownership check).  
+- [ ] Screenshot respons JSON rapi contoh: `curl.exe -s http://localhost:8000/api/posts`.  
+
+#### ✅ API Security Features (Dasar)
+- [ ] Screenshot header `X-RateLimit-Limit` dan `X-RateLimit-Remaining`.  
+- [ ] Bukti abilities pada token (potongan kode `createToken($name, $abilities)`).  
+
+#### ✅ Dokumentasi Ringkas
+- [ ] Lampirkan `submission/week6/api-docs.md` (ringkas, minimal daftar endpoint auth + 1 CRUD terproteksi, contoh request/response).  
 
 ### Create comprehensive README
 cat > submission/week6/README.md << 'EOF'
