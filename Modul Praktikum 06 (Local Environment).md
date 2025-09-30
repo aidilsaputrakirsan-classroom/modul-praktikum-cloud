@@ -66,6 +66,10 @@ ls database/migrations/ | grep sanctum
 ```php
 <?php
 
+use Laravel\Sanctum\Sanctum;
+use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
+use Illuminate\Cookie\Middleware\EncryptCookies;
+
 return [
     /*
     |--------------------------------------------------------------------------
