@@ -49,15 +49,14 @@ composer show laravel/sanctum
 ##### Step 1.1: Install Laravel Sanctum Package
 ```bash
 # Install Laravel Sanctum (compatible with Laravel 12)
-composer require laravel/sanctum:^4.0
+composer require laravel/sanctum
 
 # (Opsional) Publish Sanctum configuration jika perlu kustomisasi
-# (Pada project ini config/sanctum.php sudah tersedia)
-php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider" --tag=config
+php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider"
 
 # Verify published files
 ls config/sanctum.php
-ls database/migrations/ | grep sanctum
+ls database/migrations
 ```
 
 ##### Step 1.2: Configure Sanctum Settings
