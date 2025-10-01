@@ -165,7 +165,7 @@ API_PREFIX=api
 API_DEBUG=true
 ```
 
-##### Step 1.4: Create file migrations `2025_09_29_000001_create_personal_access_tokens_table.php`
+##### Step 1.4: Edit file migrations `2025_09_29_000001_create_personal_access_tokens_table.php`
 
 ```php
 <?php
