@@ -3664,12 +3664,12 @@ echo 'Expired tokens: ' . \$expired . PHP_EOL;
 
 #### ✅ Authentication System
 - [ ] Lampirkan `app/Http/Controllers/Api/AuthController.php` .  
-- [ ] Lampirkan `app/Models/User.php` dengan trait `HasApiTokens`.  
+- [ ] Lampirkan `app/Models/User.php` dengan trait `HasApiTokens`.
+- [ ] Screenshot login menghasilkan token dan validasi `GET /api/auth/me` dengan Bearer token.  
 
 #### ✅ Authorization & Role-Based Access Control
 - [ ] Lampirkan `app/Http/Middleware/CheckApiRole.php`.  
 - [ ] Lampirkan `routes/api.php` (route groups + middleware).  
-- [ ] Screenshot akses endpoint admin/editor-only dengan user biasa (403) dan dengan role yang benar (200).  
 
 #### ✅ CRUD API Sederhana
 - [ ] Lampirkan `app/Http/Controllers/Api/PostApiController.php` .  
