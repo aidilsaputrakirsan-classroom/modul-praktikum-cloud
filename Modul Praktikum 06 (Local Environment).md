@@ -3680,7 +3680,7 @@ echo 'Expired tokens: ' . \$expired . PHP_EOL;
 - [ ] Screenshot respons JSON rapi contoh: `curl.exe -s http://localhost:8000/api/posts`.  
 
 #### ✅ API Security Features (Dasar)
-- [ ] Screenshot header `X-RateLimit-Limit` dan `X-RateLimit-Remaining`.  
+- [ ] Screenshot header `X-RateLimit-Limit` dan `X-RateLimit-Remaining`, contoh : `curl.exe -i http://localhost:8000/api/test/rate-limit`  
 - [ ] Bukti abilities pada token (potongan kode `createToken($name, $abilities)`).  
 
 #### ✅ Dokumentasi Ringkas
