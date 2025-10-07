@@ -702,6 +702,300 @@ Route::get('/test-data', function () {
 })->name('test-data');
 ```
 
+**Update file routes/web.php**
+```php
+<?php
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\PostApiController;
+use App\Http\Controllers\Api\CategoryApiController;
+use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\UserController;
+
+/*
+|--------------------------------------------------------------------------
+| API Routes - Praktikum Cloud Computing ITK Week 4
+|--------------------------------------------------------------------------
+|
+| API routes untuk AJAX operations dan frontend integration
+| Semua routes menggunakan prefix 'api' dan middleware 'api'
+|
+*/
+
+// API info endpoint
+Route::get('/info', function (Request $request) {
+    return response()->json([
+        'application' => 'Praktikum Cloud Computing ITK',
+        'version' => '1.0.0',
+        'laravel_version' => app()->version(),
+        'api_version' => 'v1',
+        'timestamp' => now()->toISOString(),
+        'endpoints' => [
+            'posts' => '/api/posts',
+            'categories' => '/api/categories',
+            'search' => '/api/posts/search',
+        ]
+    ]);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Posts API Routes
+|--------------------------------------------------------------------------
+*/
+
+// RESTful API untuk posts
+Route::apiResource('posts', PostApiController::class)->names('api.posts');
+
+// Additional posts API endpoints
+Route::prefix('posts')->group(function () {
+    // Search posts by keyword
+    Route::get('search/{keyword}', [PostApiController::class, 'search'])
+          ->name('api.posts.search');
+    
+    // Get posts by category
+    Route::get('category/{category}', [PostApiController::class, 'byCategory'])
+          ->name('api.posts.by-category');
+    
+    // Get posts by tag
+    Route::get('tag/{tag}', [PostApiController::class, 'byTag'])
+          ->name('api.posts.by-tag');
+    
+    // Get featured posts
+    Route::get('featured', [PostApiController::class, 'featured'])
+          ->name('api.posts.featured');
+    
+    // Get published posts only
+    Route::get('published', [PostApiController::class, 'published'])
+          ->name('api.posts.published');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Categories API Routes
+|--------------------------------------------------------------------------
+*/
+
+// RESTful API untuk categories 
+Route::apiResource('categories', CategoryApiController::class)->names('api.categories');
+
+// Additional categories API endpoints
+Route::prefix('categories')->group(function () {
+    // Get category tree (hierarchical structure)
+    Route::get('tree', [CategoryApiController::class, 'tree'])
+          ->name('api.categories.tree');
+    
+    // Get active categories only
+    Route::get('active', [CategoryApiController::class, 'active'])
+          ->name('api.categories.active');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Statistics API Routes
+|--------------------------------------------------------------------------
+*/
+
+// Dashboard statistics untuk admin interface
+Route::get('/stats', function () {
+    return response()->json([
+        'total_posts' => \App\Models\Post::count(),
+        'published_posts' => \App\Models\Post::published()->count(),
+        'draft_posts' => \App\Models\Post::where('status', 'draft')->count(),
+        'total_categories' => \App\Models\Category::count(),
+        'total_tags' => \App\Models\Tag::count(),
+        'total_users' => \App\Models\User::count(),
+        'recent_posts' => \App\Models\Post::latest()->take(5)->pluck('title'),
+        'generated_at' => now()->toISOString(),
+    ]);
+})->name('api.stats');
+
+// Tambahkan setelah existing API routes
+
+/*
+|--------------------------------------------------------------------------
+| Advanced Posts API Routes
+|--------------------------------------------------------------------------
+*/
+
+Route::prefix('posts')->name('api.posts.')->group(function () {
+    // Bulk operations via API
+    Route::post('bulk-update', [PostApiController::class, 'bulkUpdate'])->name('bulk-update');
+    Route::post('bulk-delete', [PostApiController::class, 'bulkDelete'])->name('bulk-delete');
+    
+    // Advanced filtering dan sorting
+    Route::get('filter', [PostApiController::class, 'filter'])->name('filter');
+    Route::get('search-advanced', [PostApiController::class, 'advancedSearch'])->name('search-advanced');
+    
+    // Post statistics dan analytics
+    Route::get('stats', [PostApiController::class, 'statistics'])->name('statistics');
+    Route::get('analytics', [PostApiController::class, 'analytics'])->name('analytics');
+    Route::get('{post}/analytics', [PostApiController::class, 'postAnalytics'])->name('post-analytics');
+    
+    // Related posts suggestions
+    Route::get('{post}/related', [PostApiController::class, 'related'])->name('related');
+    
+    // Post revisions (if implemented)
+    Route::get('{post}/revisions', [PostApiController::class, 'revisions'])->name('revisions');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Admin Analytics API Routes
+|--------------------------------------------------------------------------
+*/
+
+Route::prefix('admin')->name('api.admin.')->group(function () {
+    // Dashboard statistics
+    Route::get('dashboard-stats', function () {
+        return response()->json([
+            'posts' => [
+                'total' => \App\Models\Post::count(),
+                'published' => \App\Models\Post::published()->count(),
+                'draft' => \App\Models\Post::where('status', 'draft')->count(),
+                'archived' => \App\Models\Post::where('status', 'archived')->count(),
+            ],
+            'recent_activity' => [
+                'posts_this_week' => \App\Models\Post::where('created_at', '>=', now()->subWeek())->count(),
+                'posts_this_month' => \App\Models\Post::where('created_at', '>=', now()->subMonth())->count(),
+            ],
+            'top_categories' => \App\Models\Category::withCount('posts')
+                                                  ->orderBy('posts_count', 'desc')
+                                                  ->take(5)
+                                                  ->get(['id', 'name', 'posts_count']),
+            'popular_tags' => \App\Models\Tag::withCount('posts')
+                                             ->orderBy('posts_count', 'desc')
+                                             ->take(10)
+                                             ->get(['id', 'name', 'posts_count']),
+            'generated_at' => now()->toISOString(),
+        ]);
+    })->name('dashboard-stats');
+    
+    // Content performance metrics
+    Route::get('content-metrics', function () {
+        return response()->json([
+            'most_viewed_posts' => \App\Models\Post::published()
+                                                  ->orderBy('views_count', 'desc')
+                                                  ->take(10)
+                                                  ->get(['id', 'title', 'views_count', 'published_at']),
+            'most_commented_posts' => \App\Models\Post::published()
+                                                     ->withCount('comments')
+                                                     ->orderBy('comments_count', 'desc')
+                                                     ->take(10)
+                                                     ->get(['id', 'title', 'comments_count']),
+            'recent_comments' => \App\Models\Comment::with(['user:id,name', 'post:id,title'])
+                                                   ->latest()
+                                                   ->take(5)
+                                                   ->get(),
+            'generated_at' => now()->toISOString(),
+        ]);
+    })->name('content-metrics');
+});
+
+Route::get('/tags', fn() => \App\Models\Tag::active()->orderBy('name')->get());
+
+/*
+|--------------------------------------------------------------------------
+| Protected Posts Management (publish/unpublish)
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth:sanctum','api.role:editor,admin'])->prefix('posts')->group(function () {
+    Route::post('{post}/publish', [PostApiController::class, 'publish'])->name('api.posts.publish');
+    Route::post('{post}/unpublish', [PostApiController::class, 'unpublish'])->name('api.posts.unpublish');
+    Route::post('{id}/restore', [PostApiController::class, 'restore'])->name('api.posts.restore');
+    Route::delete('{id}/force-delete', [PostApiController::class, 'forceDelete'])->name('api.posts.force-delete');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Week 6: Authentication & User Management (Sanctum)
+|--------------------------------------------------------------------------
+| Menambahkan endpoints baru tanpa menghapus yang sudah ada.
+*/
+
+// Authentication routes
+Route::prefix('auth')->name('api.auth.')->group(function () {
+    Route::post('register', [AuthController::class, 'register'])->name('register');
+    Route::post('login', [AuthController::class, 'login'])->name('login');
+
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::get('me', [AuthController::class, 'me'])->name('me');
+        Route::post('logout', [AuthController::class, 'logout'])->name('logout');
+        Route::post('logout-all', [AuthController::class, 'logoutAll'])->name('logout-all');
+        Route::get('sessions', [AuthController::class, 'sessions'])->name('sessions');
+        Route::delete('sessions/{tokenId}', [AuthController::class, 'revokeSession'])->name('revoke-session');
+    });
+});
+
+// Protected user management routes
+Route::middleware(['auth:sanctum'])->prefix('users')->name('api.users.')->group(function () {
+    Route::get('/', [UserController::class, 'index'])->name('index');
+    Route::get('{user}', [UserController::class, 'show'])->name('show');
+
+    // Self profile
+    Route::put('profile', [UserController::class, 'updateProfile'])->name('update-profile');
+    Route::post('profile/avatar', [UserController::class, 'uploadAvatar'])->name('upload-avatar');
+    Route::delete('profile/avatar', [UserController::class, 'deleteAvatar'])->name('delete-avatar');
+
+    // Admin-only
+    Route::middleware('api.role:admin')->group(function () {
+        Route::post('/', [UserController::class, 'store'])->name('store');
+        Route::put('{user}', [UserController::class, 'update'])->name('update');
+        Route::delete('{user}', [UserController::class, 'destroy'])->name('destroy');
+        Route::post('{user}/activate', [UserController::class, 'activate'])->name('activate');
+        Route::post('{user}/deactivate', [UserController::class, 'deactivate'])->name('deactivate');
+        Route::get('stats/summary', [UserController::class, 'statistics'])->name('stats');
+    });
+});
+
+// Development-only test routes
+if (app()->environment(['local', 'testing'])) {
+    Route::prefix('test')->name('api.test.')->group(function () {
+        Route::get('auth', function (Request $request) {
+            return response()->json([
+                'authenticated' => (bool) $request->user(),
+                'user' => $request->user()?->only(['id', 'name', 'email', 'role']),
+                'token_info' => $request->user()?->getCurrentTokenInfo(),
+                'timestamp' => now()->toISOString(),
+            ]);
+        })->middleware('auth:sanctum')->name('auth');
+
+        Route::get('rate-limit', function () {
+            return response()->json([
+                'message' => 'Rate limit test successful',
+                'timestamp' => now()->toISOString(),
+            ]);
+        })->middleware('api.rate:5,1')->name('rate-limit');
+    });
+}
+
+/*
+|--------------------------------------------------------------------------
+| Public Content Routes (No Authentication)
+|--------------------------------------------------------------------------
+*/
+Route::prefix('public')->name('api.public.')->group(function () {
+    Route::get('posts', [PostApiController::class, 'publicIndex'])->name('posts.index');
+    Route::get('posts/{post:slug}', [PostApiController::class, 'publicShow'])->name('posts.show');
+    Route::get('categories', [CategoryApiController::class, 'publicIndex'])->name('categories.index');
+    Route::get('search', [PostApiController::class, 'publicSearch'])->name('search');
+
+    Route::get('stats', function () {
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'published_posts' => \App\Models\Post::published()->count(),
+                'active_categories' => \App\Models\Category::active()->count(),
+                'total_authors' => \App\Models\User::whereIn('role', ['author', 'editor', 'admin'])->count(),
+                'recent_posts' => \App\Models\Post::published()->latest('published_at')->take(5)->get(['id','title','slug','published_at']),
+            ],
+            'generated_at' => now()->toISOString(),
+        ]);
+    })->name('stats');
+});
+```
+
 #### **Bagian 2: Layouts Configuration (10 menit)**
 
 ##### Step 2.1: Create file resources/views/layouts/guest.blade.php
