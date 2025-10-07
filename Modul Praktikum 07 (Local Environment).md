@@ -702,7 +702,7 @@ Route::get('/test-data', function () {
 })->name('test-data');
 ```
 
-**Update file routes/web.php**
+**Update file routes/api.php**
 ```php
 <?php
 
